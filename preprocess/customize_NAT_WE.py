@@ -16,7 +16,7 @@ from dask.distributed import as_completed, wait
 import psutil
 
 from etc import valid_date, parse_dates, benchmark
-from combine_days import combine_netcdf_files
+from combine_nc import combine_netcdf_files
 
 
 parser = argparse.ArgumentParser(
