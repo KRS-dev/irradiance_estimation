@@ -18,7 +18,15 @@ def combine_netcdf_files(SAVE_PATH, dt_str, nm, verbose=False):
             print(HRESVIRIfns)
 
         #automatically concat the nc on the time dimension, VERY fast
-        ds = xarray.open_mfdataset(HRESVIRIfns, preprocess=append_time_dim, parallel=True)
+        ds = xarray.open_mfdataset(HRESVIRIfns, 
+                                   preprocess=append_time_dim, 
+                                   parallel=True,
+                                   concat_dim="time", 
+                                    combine="nested",
+                                    data_vars='minimal', 
+                                    coords='minimal', 
+                                    compat='override'
+                                   )
         
         ds.to_netcdf(out_fn)
         for fn in HRESVIRIfns:
