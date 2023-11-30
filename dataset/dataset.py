@@ -1,4 +1,4 @@
-import os
+import itertools
 import torch
 import pandas as pd
 from datetime import datetime
@@ -7,6 +7,7 @@ from torch.utils.data import DataLoader, Dataset, Subset
 import xarray
 from datetime import timedelta
 import dask
+from xrpatcher import XRDAPatcher
 
 import lightning as L
 
@@ -45,7 +46,7 @@ def train_test_split(msgdataset, timeindex):
 
 
 class MSGDataset(Dataset):
-    def __init__(self, train_paths, sarah_paths):
+    def __init__(self, train_paths, sarah_paths, rechunk=None, patch_size = (32,32)):
         # self.cluster = SLURMCluster(
         #     cores=12,
         #     memory='61GB',
@@ -61,7 +62,7 @@ class MSGDataset(Dataset):
         self.x = xarray.open_mfdataset(
             train_path,
             parallel=True,
-            # chunks={'time':100, 'lat':-1, 'lon':-1},
+            chunks=rechunk,
             concat_dim="time",
             combine="nested",
             data_vars="minimal",
@@ -69,11 +70,12 @@ class MSGDataset(Dataset):
             compat="override",
             engine="h5netcdf",
         )
+        self.attributes = self.x.attrs
 
-        self.sarah = xarray.open_mfdataset(
+        self._sarah = xarray.open_mfdataset(
             sarah_path,
             parallel=True,
-            # chunks={'time':48, 'lat':-1, 'lon':-1},
+            chunks=rechunk,
             concat_dim="time",
             combine="nested",
             data_vars="minimal",
@@ -85,31 +87,51 @@ class MSGDataset(Dataset):
         a = sorted(
             list(
                 set(self.x.time.dt.round("30min").values).intersection(
-                    set(self.sarah.time.dt.round("30min").values)
+                    set(self._sarah.time.dt.round("30min").values)
                 )
             )
         )
 
-        self.sarah = self.sarah.reindex(
+        self._sarah = self._sarah.reindex(
             time=a, lat=self.x.lat, lon=self.x.lon, method="nearest"
         )
-        self.sarah = self.sarah.drop(["lon_bnds", "lat_bnds", "record_status"])
+        self._sarah = self._sarah.drop(["lon_bnds", "lat_bnds", "record_status"])
         self.x = self.x.reindex(time=a, method="nearest")
         self.x = self.x.drop(["crs"])
+        self.y = self._sarah
 
-        self.attributes = self.x.attrs
+        self.patch_size = patch_size
+        if self.patch_size is not None:
 
-        self.output = self.sarah
+            xy = xarray.merge([self.x, self.y], 'equals').to_array()
+            patches = dict(lon=self.patch_size[0], lat=self.patch_size[1])
+            self.patcher = XRDAPatcher(
+                da = xy,
+                patches=patches,
+                strides=patches,
+                check_full_scan=True
+            )
         # self.cluster.close()
 
     def __len__(self):
-        return len(self.labels)
+        if self.patch_size is None:
+            return len(self.y)
+        else:
+            return len(self.patcher)
+    
+    def reconstruct_from_batches(self, batches, **rec_kws):
+        if self.patch_size is not None:
+            return self.batcher.reconstruct([*itertools.chain(*batches)], **rec_kws)
 
     def __getitem__(self, idx):
-        trainarr = self.train.isel(time=idx).to_array()
-        outputarr = self.output.isel(time=idx).to_array()
-        x = torch.as_tensor(trainarr.values)
-        y = torch.as_tensor(outputarr.values)
+        if self.patch_size is not None:
+            xarr = self.x.isel(time=idx)
+            yarr = self.y.isel(time=idx)
+            x = torch.as_tensor(xarr.values)
+            y = torch.as_tensor(yarr.values)
+        else:
+            xy = self.patcher[idx].load().values()
+            x, y = 
         return x, y
 
 
@@ -130,7 +152,7 @@ class MSGDataModule(L.LightningDataModule):
         )
 
         self.msg_train, self.msg_validation = train_test_split(
-            self.msg_full, self.msg_full.output.indexes["time"]
+            self.msg_full, self.msg_full.y.indexes["time"]
         )
 
     def train_dataloader(self):
@@ -147,7 +169,11 @@ if __name__ == "__main__":
     train_path = "/scratch/snx3000/kschuurm/DATA/customized/HRSEVIRI_2014*"
     sarah_path = "/scratch/snx3000/kschuurm/DATA/SARAH3/SIS_2014.nc"
 
-    dataloader = MSGDataModule()
-    dataloader.setup("fit")
-    print(len(dataloader.msg_train))
-    print(len(dataloader.msg_validation))
+    dm = MSGDataModule()
+    dm.setup("fit")
+    print(len(dm.msg_train))
+    print(len(dm.msg_validation))
+
+    for x,y in dm.msg_train:
+        print('Feature data shape', x.shape)
+        print('Output data shape', y.shape)

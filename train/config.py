@@ -1,5 +1,5 @@
 # Training Hyperparameters
-INPUT_SIZE = (32,32)
+INPUT_SIZE = (32, 32)
 INPUT_CHANNELS = 11
 OUTPUT_CHANNELs = 1
 LEARNING_RATE = 0.001
@@ -13,6 +13,6 @@ MAX_EPOCHS = 10
 NUM_WORKERS = 1
 
 # Compute related
-ACCELERATOR = 'gpu'
+ACCELERATOR = "gpu"
 DEVICES = [0]
 PRECISION = 32

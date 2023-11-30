@@ -5,12 +5,8 @@ from dataset import MSGDataModule
 import config
 
 
-if __name__ == '__main__':
-
-    wandb_logger = WandbLogger(
-        project='SIS_estimation'
-    )
-
+if __name__ == "__main__":
+    wandb_logger = WandbLogger(project="SIS_estimation")
 
     dm = MSGDataModule(batch_size=config.BATCH_SIZE)
 
@@ -20,5 +16,5 @@ if __name__ == '__main__':
         devices=config.DEVICES,
         min_epochts=config.MIN_EPOCHS,
         max_epochs=config.MAX_EPOCHS,
-        precision=config.PRECISION
-        )
+        precision=config.PRECISION,
+    )
