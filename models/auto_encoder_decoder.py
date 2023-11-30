@@ -1,30 +1,46 @@
 from typing import Any
+from lightning.pytorch.utilities.types import OptimizerLRScheduler
+from lightning.pytorch import optimizer
+from torch.optim import Adam
 import torch.nn as nn
 import torch.nn.functional as F
-import lightning as pl
+import lightning as L
 
 
-
-
-class NN(pl.LightningModule):
-    def __init__(self, input_size, num_classes) -> None:
+class Encoder(nn.Module):
+    def __init__(self):
         super().__init__()
+        self.l1 = nn.Sequential(nn.Linear(28 * 28, 64), nn.ReLU(), nn.Linear(64, 3))
 
-        self.fc1 = nn.Linear(input_size, 50)
-        self.fc2 = nn.Linear(50, num_classes)
-
-        self.loss_fn = nn.CrossEntropyLoss()
-    
     def forward(self, x):
-        x = self.fc1(x)
-        x = F.relu(x)
-        x = self.fc2(x)
-        return x
-    
-    def train_step(self, batch, batch_idx):
+        return self.l1(x)
+
+
+class Decoder(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.l1 = nn.Sequential(nn.Linear(3, 64), nn.ReLU(), nn.Linear(64, 28 * 28))
+
+    def forward(self, x):
+        return self.l1(x)
+
+
+class LitAutoEncoder(L.LightningModule):
+    def __init__(self, learning_rate, encoder, decoder):
+        super().__init__()
+        self.lr = learning_rate
+        self.encoder = encoder
+        self.decoder = decoder
+
+    def training_step(self, batch, batch_idx):
+        # training_step defines the train loop.
         x, y = batch
-        x.reshape(x.size(0), -1)
-        scores = self.forward(x)
-        loss = self.loss_fn(scores, y)
+        x = x.view(x.size(0), -1)
+        z = self.encoder(x)
+        x_hat = self.decoder(z)
+        loss = F.mse_loss(x_hat, x)
         return loss
 
+    def configure_optimizers(self):
+        optimizer = Adam(self.parameters(), lr=self.lr)
+        return optimizer
