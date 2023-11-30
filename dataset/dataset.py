@@ -2,7 +2,7 @@ import itertools
 import torch
 import pandas as pd
 from datetime import datetime
-from dask_jobqueue import SLURMCluster
+# from dask_jobqueue import SLURMCluster
 from torch.utils.data import DataLoader, Dataset, Subset
 import xarray
 from datetime import timedelta
@@ -60,7 +60,7 @@ class MSGDataset(Dataset):
         # self.cluster.scale(4)
 
         self.x = xarray.open_mfdataset(
-            train_path,
+            train_paths,
             parallel=True,
             chunks=rechunk,
             concat_dim="time",
@@ -73,7 +73,7 @@ class MSGDataset(Dataset):
         self.attributes = self.x.attrs
 
         self._sarah = xarray.open_mfdataset(
-            sarah_path,
+            sarah_paths,
             parallel=True,
             chunks=rechunk,
             concat_dim="time",
@@ -104,12 +104,11 @@ class MSGDataset(Dataset):
         if self.patch_size is not None:
 
             xy = xarray.merge([self.x, self.y], 'equals').to_array()
-            patches = dict(lon=self.patch_size[0], lat=self.patch_size[1])
+            patches = dict(time=1, lon=self.patch_size[0], lat=self.patch_size[1])
             self.patcher = XRDAPatcher(
                 da = xy,
                 patches=patches,
-                strides=patches,
-                check_full_scan=True
+                strides=patches
             )
         # self.cluster.close()
 
@@ -124,31 +123,39 @@ class MSGDataset(Dataset):
             return self.batcher.reconstruct([*itertools.chain(*batches)], **rec_kws)
 
     def __getitem__(self, idx):
-        if self.patch_size is not None:
-            xarr = self.x.isel(time=idx)
-            yarr = self.y.isel(time=idx)
+        if self.patch_size is None:
+            print('nopatch')
+            xarr = self.x.isel(time=idx).to_array()
+            yarr = self.y.isel(time=idx).to_array()
             x = torch.as_tensor(xarr.values)
             y = torch.as_tensor(yarr.values)
         else:
-            xy = self.patcher[idx].load().values()
-            x, y = 
+            print('patch')
+            xy = self.patcher[idx].isel(time=0).load()
+            xarr, yarr = xy[:-1], xy[-1]
+            x = torch.as_tensor(xarr.values)
+            y = torch.as_tensor(yarr.values)
+
         return x, y
 
 
 class MSGDataModule(L.LightningDataModule):
-    def __init__(self, batch_size: int = 32):
+    def __init__(self, batch_size: int = 32, patch_size=None):
         super().__init__()
         # self.data_dir = data_dir
         self.batch_size = batch_size
+        self.patch_size = patch_size
 
     def setup(self, stage: str):
         self.msg_full = MSGDataset(
-            "/scratch/snx3000/kschuurm/DATA/customized/HRSEVIRI_2015*",
+            "/scratch/snx3000/kschuurm/DATA/customized/HRSEVIRI_201501*",
             "/scratch/snx3000/kschuurm/DATA/SARAH3/SIS_2015.nc",
+            patch_size = self.patch_size
         )
         self.msg_test = MSGDataset(
-            "/scratch/snx3000/kschuurm/DATA/customized/HRSEVIRI_2014*",
+            "/scratch/snx3000/kschuurm/DATA/customized/HRSEVIRI_201401*",
             "/scratch/snx3000/kschuurm/DATA/SARAH3/SIS_2014.nc",
+            patch_size = self.patch_size
         )
 
         self.msg_train, self.msg_validation = train_test_split(
@@ -169,11 +176,12 @@ if __name__ == "__main__":
     train_path = "/scratch/snx3000/kschuurm/DATA/customized/HRSEVIRI_2014*"
     sarah_path = "/scratch/snx3000/kschuurm/DATA/SARAH3/SIS_2014.nc"
 
-    dm = MSGDataModule()
+    dm = MSGDataModule(patch_size=(64, 64))
     dm.setup("fit")
     print(len(dm.msg_train))
     print(len(dm.msg_validation))
 
     for x,y in dm.msg_train:
-        print('Feature data shape', x.shape)
-        print('Output data shape', y.shape)
+        print('Feature data shape:', x.shape)
+        print('Output data shape:', y.shape)
+        break

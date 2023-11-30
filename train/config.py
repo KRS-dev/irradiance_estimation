@@ -8,6 +8,7 @@ NUM_EPOCHS = 3
 MIN_EPOCHS = 1
 MAX_EPOCHS = 10
 
+
 # Dataset
 # DATA_DIR
 NUM_WORKERS = 1
