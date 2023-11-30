@@ -1,6 +1,5 @@
 from typing import Any
 from lightning.pytorch.utilities.types import OptimizerLRScheduler
-from lightning.pytorch import optimizer
 from torch.optim import Adam
 from torchmetrics.functional import mean_squared_error
 import torch.nn as nn
@@ -15,8 +14,8 @@ class LitEstimator(L.LightningModule):
         self.lr = learning_rate
         
         self.model = model
-        self.metric = mean_squared_error()
-        self.save_hyperparameters()
+        self.metric = mean_squared_error
+        self.save_hyperparameters(ignore=['model'])
 
     def training_step(self, batch, batch_idx):
         loss, y_hat, y = self._shared_eval_step(batch, batch_idx)

@@ -1,8 +1,9 @@
+import torch
 from lightning import Trainer
-from dataset import MSGDataModule
-from models import FNO2d_estimation, LitEstimator
-import config
-
+from dataset.dataset import MSGDataModule
+from models.FNO import FNO2d_estimation
+from models.auto_encoder_decoder import LitEstimator
+from train import config
 
 if __name__ == "__main__":
     # wandb_logger = WandbLogger(project="SIS_estimation")
@@ -11,7 +12,7 @@ if __name__ == "__main__":
 
     model = FNO2d_estimation(
         n_modes_height =10,
-        n_modes_width =10,
+        n_modes_width = 10,
         hidden_channels = 20,
     )
 
@@ -21,6 +22,7 @@ if __name__ == "__main__":
     )
 
     trainer = Trainer(
+        fast_dev_run=True,
         # logger=wandb_logger,
         accelerator=config.ACCELERATOR,
         devices=config.DEVICES,
@@ -29,4 +31,4 @@ if __name__ == "__main__":
         precision=config.PRECISION,
     )
 
-    
+    trainer.fit(model=model, train_dataloaders=dm)

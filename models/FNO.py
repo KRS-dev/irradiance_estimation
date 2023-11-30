@@ -1,4 +1,4 @@
-from neuralop import FNO2d, FNO
+from neuralop.models import FNO
 
 
 
