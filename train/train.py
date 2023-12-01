@@ -1,4 +1,4 @@
-from lightning import Trainer
+from pytorch_lightning import Trainer
 from dataset import MSGDataModule
 from models import FNO2d_estimation, LitEstimator
 import config
