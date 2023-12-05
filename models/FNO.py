@@ -79,14 +79,14 @@ class SpectralConv2d(L.LightningModule):
     def forward(self, x):
         batchsize = x.shape[0]
         #Compute Fourier coeffcients up to factor of e^(- something constant)
-        x_ft = torch.fft.fft2(x)
+        x_ft = torch.fft.rfft2(x)
 
         # Multiply relevant Fourier modes
         out_ft = torch.zeros(batchsize, self.out_channels, x.size(-2)//2 + 1, x.size(-1)//2 + 1, device=x.device, dtype=torch.cfloat)
         out_ft[:, :, :self.modes_height, :self.modes_width] = self.compl_mul1d(x_ft[:, :, :self.modes_height, :self.modes_width], self.weights1)
 
         #Return to physical space
-        x = torch.fft.irfft(out_ft, n=x.size(-1))
+        x = torch.fft.irfft2(out_ft, s=(x.size(-2), x.size(-1)))
         return x
 
 class FNO2d(nn.Module):
@@ -111,16 +111,16 @@ class FNO2d(nn.Module):
         self.input_channels = input_channels
         self.output_channels = output_channels
         self.padding = 2 # pad the domain if input is non-periodic
-        self.fc0 = nn.Linear(self.input_channels, self.channels) # input channel is 2: (a(x), x)
+        self.fc0 = nn.Linear(self.input_channels + 2, self.channels) # input channel is 2: (a(x), x)
 
         self.conv0 = SpectralConv2d(self.channels, self.channels, self.modes)
         self.conv1 = SpectralConv2d(self.channels, self.channels, self.modes)
         self.conv2 = SpectralConv2d(self.channels, self.channels, self.modes)
         self.conv3 = SpectralConv2d(self.channels, self.channels, self.modes)
-        self.w0 = nn.Conv1d(self.channels, self.channels, 1)
-        self.w1 = nn.Conv1d(self.channels, self.channels, 1)
-        self.w2 = nn.Conv1d(self.channels, self.channels, 1)
-        self.w3 = nn.Conv1d(self.channels, self.channels, 1)
+        self.w0 = nn.Conv2d(self.channels, self.channels, 1)
+        self.w1 = nn.Conv2d(self.channels, self.channels, 1)
+        self.w2 = nn.Conv2d(self.channels, self.channels, 1)
+        self.w3 = nn.Conv2d(self.channels, self.channels, 1)
 
         self.fc1 = nn.Linear(self.channels, 128)
         self.fc2 = nn.Linear(128, self.output_channels)
@@ -136,6 +136,7 @@ class FNO2d(nn.Module):
 
         x1 = self.conv0(x)
         x2 = self.w0(x)
+
         x = x1 + x2
         x = F.gelu(x)
 
@@ -165,8 +166,8 @@ class FNO2d(nn.Module):
         batchsize, size_x, size_y = shape[0], shape[2], shape[3]
         gridx = torch.tensor(np.linspace(0, 1, size_x), dtype=torch.float)
         gridy = torch.tensor(np.linspace(0, 1, size_y), dtype=torch.float)
-        xx, yy = np.meshgrid(gridx, gridy)
-        grid = torch.concat(xx.reshape(1, size_x, size_y), yy.reshape(1, size_x, size_y), dim=0).reshape(1, 2, size_x, size_y)
+        xx, yy = torch.meshgrid(gridx, gridy, indexing='ij')
+        grid = torch.concat((xx.reshape(1, size_x, size_y), yy.reshape(1, size_x, size_y)), dim=0).reshape(1, 2, size_x, size_y)
         grid = grid.repeat([batchsize, 1, 1, 1])
         return grid.to(device)
 
