@@ -22,18 +22,17 @@ import torch
 from torch.utils.data import DataLoader
 import matplotlib.pyplot as plt
 
-def train_test_split( ds):
-        timeindex = ds.time.indexes['time'] # returns a pandas time index useful for the manipulation
-
+def train_test_split(ds):
+        
         def last_day_of_month(any_day):
             # The day 28 exists in every month. 4 days later, it's always next month
             next_month = any_day.replace(day=28) + timedelta(days=4)
             # subtracting the number of the current day brings us back one month
             return next_month - timedelta(days=next_month.day)
 
-        dt_start = timeindex.min()
-        dt_end = timeindex.max()
-        month_dr = pd.date_range(start=dt_start, end=dt_end, freq="M")
+        dt_start = ds.time.min()
+        dt_end = ds.time.max()
+        month_dr = pd.date_range(start=dt_start, end=dt_end, freq="M") # monthly daterange
 
         train_ls = []
         test_ls = []
@@ -46,8 +45,8 @@ def train_test_split( ds):
             test = end - timedelta(days=7)
 
 
-            train_ls.append(slice(start, test))
-            test_ls.append(slice(test, end))
+            train_ls.append(slice(start, test)) # first ~3 weeks
+            test_ls.append(slice(test, end)) # last week of the month
 
         ds_train = ds.sel(time=train_ls)
         ds_test = ds.sel(time=test_ls)
@@ -93,12 +92,13 @@ class MSGDatasetBatched(Dataset):
         self.target_transform = target_transform
         self.ds = generator.ds
         self.attributes = self.ds.attrs
+
         assert y_var in vars, 'y_var not available in the dataset'
         self.y_var = y_var
-
         vars = set(self.ds.keys())
         ignore_vars = set(['lon_bnds', 'lat_bnds', 'record_status', 'crs'])
         other_vars = vars - ignore_vars - set([y_var,])
+
         if x_vars is not None:
             assert set(x_vars) in other_vars, f'{set(x_vars)^other_vars} not in the dataset'
             self.x_vars = x_vars
@@ -118,7 +118,7 @@ class MSGDatasetBatched(Dataset):
                     f"{type(self).__name__}.__getitem__ currently requires a single integer key"
                 )
 
-        X_batch = self.generator[idx][self.x_vars].torch.to_named_tensor()
+        X_batch = self.generator[idx][self.x_vars].torch.to_named_tensor() # (Batch, Channel, Time, X, Y)
         y_batch = self.y_generator[idx][self.y_var].torch.to_named_tensor()
 
         if self.transform:
@@ -131,19 +131,12 @@ class MSGDatasetBatched(Dataset):
 
 
 class MSGDataModule(L.LightningDataModule):
-    def __init__(self, zarr_store:str, batch_size: int = 32, patch_size=None, num_workers=12):
+    def __init__(self, zarr_store:str, batch_size: int = 32, patch_size: (int, int)=None, num_workers:int=12):
         super().__init__()
-        # self.data_dir = data_dir
         self.batch_size = batch_size
         self.patch_size = patch_size
         self.num_workers = num_workers
         self.zarr_store = zarr_store
-
-        ## Do not rechunk the dataset anymore
-        # if self.patch_size:
-        #     self.rechunk = {'time':self.batch_size, 'lat':self.patch_size[1], 'lon':self.patch_size[0]}
-        # else:
-        #     self.rechunk = None
 
     def setup(self, stage: str ):
         if stage == 'fit':
@@ -153,20 +146,18 @@ class MSGDataModule(L.LightningDataModule):
                     y_var='SIS',
                 )
 
-
             with benchmark('train_test_split'):
-                train_ds = self.msg_full.ds.isel(time=slice(datetime(2015,1,1,0,0), None))
+                train_ds = self.msg_full.ds.isel(time=slice(datetime(2015,1,1,0,0), None)) # 2014 is used as test
                 self.msg_train_ds, self.msg_validation_ds = train_test_split(self.msg_full.ds)
             
-            train_ds, valid_ds = train_test_split(self.msg_full.ds)
             if self.patch_size is not None:
-                traingenerator = BatchGenerator(ds=train_ds, 
+                # Using xbatcher to make batches of patched data
+                traingenerator = BatchGenerator(ds=self.msg_train_ds, 
                                            input_dims={'lat':self.patch_size[1], 'lon':self.patch_size[0]}
                             )
-                validgenerator = BatchGenerator(ds=valid_ds, 
+                validgenerator = BatchGenerator(ds=self.msg_validation_ds, 
                                            input_dims={'lat':self.patch_size[1], 'lon':self.patch_size[0]}
                             )
-                 
                 self.msg_train = MSGDatasetBatched(generator=traingenerator, y_var='SIS')
                 self.msg_test = MSGDatasetBatched(generator=validgenerator, y_var='SIS')
             else:
@@ -199,6 +190,8 @@ class MSGDataModule(L.LightningDataModule):
 
 
 if __name__ == '__main__':
+
+    ## For testing
     filenames = ['/scratch/snx3000/kschuurm/DATA/HRSEVIRI.zarr']
 
     patch_size = dict(lat=128, lon=128)

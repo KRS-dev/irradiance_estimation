@@ -2,7 +2,7 @@ from pytorch_lightning import Trainer
 from pytorch_lightning.loggers import WandbLogger
 from irradiance_estimation.dataset.dataset_old import MSGDataModule
 from models.FNO import FNO2d
-from models.auto_encoder_decoder import LitEstimator
+from irradiance_estimation.models.LightningModule import LitEstimator
 from train import config
 from preprocess.etc import benchmark
 from dask.distributed import Client, LocalCluster

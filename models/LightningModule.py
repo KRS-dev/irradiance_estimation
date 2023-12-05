@@ -11,7 +11,6 @@ class LitEstimator(L.LightningModule):
     def __init__(self, learning_rate, model):
         super().__init__()
         self.lr = learning_rate
-        
         self.model = model
         self.metric = RelativeSquaredError()
         self.save_hyperparameters(ignore=['model'])
