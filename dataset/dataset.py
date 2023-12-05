@@ -7,7 +7,8 @@ from torch.utils.data import DataLoader, Dataset, Subset
 import xarray
 from datetime import timedelta
 # import dask
-from xrpatcher import XRDAPatcher
+# from xrpatcher import XRDAPatcher
+from xbatcher import BatchGenerator
 from glob import glob
 from preprocess.etc import benchmark
 import pytorch_lightning as L
@@ -54,21 +55,22 @@ def train_test_split( ds):
         return ds_train, ds_test
 
 class MSGDataset(Dataset):
-    def __init__(self, y_var:str, x_vars=None, zarr_path=None, rechunk=None):
+    def __init__(self, dataset, y_var:str, x_vars=None, rechunk=None):
 
-        if zarr_path is not None:
+        if isinstance(dataset, str):
+            self.ds = xarray.open_zarr(dataset)
+        elif isinstance(dataset, xarray.Dataset):
+            self.ds = dataset
+        else:
+            raise ValueError(f'{dataset} is not a zarr store or a xarray.Dataset')
             
-            self.ds = xarray.open_zarr(zarr_path)
-            
-            self.attributes = self.ds.attrs
+        self.attributes = self.ds.attrs
 
-            vars = set(self.ds.keys())
-            ignore_vars = set(['lon_bnds', 'lat_bnds', 'record_status', 'crs'])
-            assert y_var in vars, 'y_var not available in the dataset'
-            self.y_var = y_var
-            self.x_vars = vars - ignore_vars - set([y_var,])
-
-            # self.cluster.close()
+        vars = set(self.ds.keys())
+        ignore_vars = set(['lon_bnds', 'lat_bnds', 'record_status', 'crs'])
+        assert y_var in vars, 'y_var not available in the dataset'
+        self.y_var = y_var
+        self.x_vars = vars - ignore_vars - set([y_var,])
 
     def __len__(self):
         return len(self.ds.time)
@@ -129,31 +131,35 @@ class MSGDatasetBatched(Dataset):
 
 
 class MSGDataModule(L.LightningDataModule):
-    def __init__(self, batch_size: int = 32, patch_size=None, num_workers=12):
+    def __init__(self, zarr_store:str, batch_size: int = 32, patch_size=None, num_workers=12):
         super().__init__()
         # self.data_dir = data_dir
         self.batch_size = batch_size
         self.patch_size = patch_size
         self.num_workers = num_workers
+        self.zarr_store = zarr_store
 
-        if self.patch_size:
-            self.rechunk = {'time':self.batch_size, 'lat':self.patch_size[1], 'lon':self.patch_size[0]}
-        else:
-            self.rechunk = None
+        ## Do not rechunk the dataset anymore
+        # if self.patch_size:
+        #     self.rechunk = {'time':self.batch_size, 'lat':self.patch_size[1], 'lon':self.patch_size[0]}
+        # else:
+        #     self.rechunk = None
 
     def setup(self, stage: str ):
         if stage == 'fit':
             with benchmark('initialize MSGdataset full test'):
                 self.msg_full = MSGDataset(
+                    dataset=self.zarr_store,
                     y_var='SIS',
-                    zarr_path='/scratch/snx3000/kschuurm/DATA/HRSEVIRI.zarr'
                 )
 
+
             with benchmark('train_test_split'):
+                train_ds = self.msg_full.ds.isel(time=slice(datetime(2015,1,1,0,0), None))
                 self.msg_train_ds, self.msg_validation_ds = train_test_split(self.msg_full.ds)
             
+            train_ds, valid_ds = train_test_split(self.msg_full.ds)
             if self.patch_size is not None:
-                train_ds, valid_ds = train_test_split(self.msg_full.ds)
                 traingenerator = BatchGenerator(ds=train_ds, 
                                            input_dims={'lat':self.patch_size[1], 'lon':self.patch_size[0]}
                             )
@@ -169,16 +175,13 @@ class MSGDataModule(L.LightningDataModule):
                 with benchmark('patch validation'):
                     self.msg_validation = MSGDataset(self.msg_validation_ds)
 
-        # if stage == 'test':
-        #     self.msg_test = MSGDatasetPatched(
-        #         raw_paths ="/scratch/snx3000/kschuurm/DATA/customized/HRSEVIRI_2014*",
-        #         sarah_paths="/scratch/snx3000/kschuurm/DATA/SARAH3/SIS_2014.nc",
-        #         # rechunk = self.rechunk,
-        #     )
-        #     self.msg_test= MSGDatasetPatched( patch_size=self.patch_size)
-
-
-
+        if stage == 'test':
+            test_ds = self.msg_full.ds.sel(time=slice(datetime(2014,1,1,0,0), datetime(2014,12,31,23,59)))
+            if self.patch_size is not None:
+                testgenerator = BatchGenerator(ds=test_ds, 
+                                               input_dims={'lat':self.patch_size[1], 'lon':self.patch_size[0]}
+                                               )
+                self.msg_test = MSGDatasetBatched(generator=testgenerator, y_var='SIS')
 
     def prepare_data(self, stage: str):
         pass
@@ -200,36 +203,14 @@ if __name__ == '__main__':
 
     patch_size = dict(lat=128, lon=128)
 
-    patch_sampler = zds.BlueNoisePatchSampler(patch_size=patch_size)
-
-    image_specs = zds.ImagesDatasetSpecs(
-        filenames=filenames,
-        data_group="0",
-        source_axes="TCZYX",
-        )
-
-    my_dataset = zds.ZarrDataset(image_specs,
-                                patch_sampler=patch_sampler,
-                                shuffle=True)
-    
-
-
-    # img_preprocessing = torchvision.transforms.Compose([
-    #     zds.ToDtype(dtype=np.float32),
-    # ])
-
-    # my_dataset.add_transform("images", img_preprocessing)
-
-
-    my_dataloader = DataLoader(my_dataset, num_workers=4,
-                           worker_init_fn=zds.zarrdataset_worker_init_fn)
+    dm = MSGDataModule(batch_size=32, patch_size=(128,128), num_workers=7)
+    dm.setup('fit')
+    dl = dm.train_dataloader()
     
     samples = []
-    for i, sample in enumerate(my_dataloader):
-        # Samples generated by DataLoaders have Batch (B) as first axes
-        samples.append(torch.moveaxis(sample[0, 0, :, 0], 0, -1))
-
-        print(f"Sample {i+1} with size {sample.shape}")
+    for i, sample in enumerate(dl):
+        
+        print(sample.shape)
 
         if i >= 4:
             # Take only five samples for illustration purposes

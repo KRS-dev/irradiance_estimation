@@ -1,13 +1,14 @@
 from pytorch_lightning import Trainer
+from pytorch_lightning.loggers import WandbLogger
 from dataset import MSGDataModule
 from models import FNO2d_estimation, LitEstimator
 import config
 
 
 if __name__ == "__main__":
-    # wandb_logger = WandbLogger(project="SIS_estimation")
+    wandb_logger = WandbLogger(project="SIS_estimation")
 
-    dm = MSGDataModule(batch_size=config.BATCH_SIZE)
+    dm = MSGDataModule(batch_size=config.BATCH_SIZE) # contains all the dataloaders, does train test split etc. Access dataloader by runing dm.train_dataloader
 
     model = FNO2d_estimation(
         n_modes_height =10,
@@ -21,7 +22,7 @@ if __name__ == "__main__":
     )
 
     trainer = Trainer(
-        # logger=wandb_logger,
+        logger=wandb_logger,
         accelerator=config.ACCELERATOR,
         devices=config.DEVICES,
         min_epochs=config.MIN_EPOCHS,
