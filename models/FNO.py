@@ -127,11 +127,11 @@ class FNO2d(nn.Module):
 
     def forward(self, x):
         grid = self.get_grid(x.shape, x.device)
-        x = torch.cat((x, grid), dim=1)
+        x = torch.cat((x, grid), dim=1) # (B, C, X, Y) 
 
-        x = x.permute(0,2,3,1)
+        x = x.permute(0,2,3,1) # (B, X, Y, C)
         x = self.fc0(x)
-        x = x.permute(0,3,1,2)
+        x = x.permute(0,3,1,2) # (B, C, X, Y)
         # x = F.pad(x, [0,self.padding]) # pad the domain if input is non-periodic
 
         x1 = self.conv0(x)
@@ -155,12 +155,12 @@ class FNO2d(nn.Module):
         x = x1 + x2
 
         # x = x[..., :-self.padding] # pad the domain if input is non-periodic
-        x = x.permute(0,2,3,1)
+        x = x.permute(0,2,3,1) # (B, X, Y, C)
         x = self.fc1(x)
         x = F.gelu(x)
         x = self.fc2(x)
-        x = x.permute(0,3,1,2)
-        return x
+        x = x.permute(0,3,1,2) # (B, C, X, Y)
+        return x # (B, 1, X, Y)
 
     def get_grid(self, shape, device):
         batchsize, size_x, size_y = shape[0], shape[2], shape[3]
@@ -236,7 +236,7 @@ class FNO1d(nn.Module):
         x = self.fc1(x)
         x = F.gelu(x)
         x = self.fc2(x)
-        return x
+        return x 
 
     def get_grid(self, shape, device):
         batchsize, size_x = shape[0], shape[1]

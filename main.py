@@ -1,27 +1,31 @@
 from pytorch_lightning import Trainer
 from pytorch_lightning.loggers import WandbLogger
-from irradiance_estimation.dataset.dataset_old import MSGDataModule
+from dataset.dataset import MSGDataModule
 from models.FNO import FNO2d
-from irradiance_estimation.models.LightningModule import LitEstimator
-from train import config
-from preprocess.etc import benchmark
-from dask.distributed import Client, LocalCluster
+from models.LightningModule import LitEstimator
 
+# from pytorch_lightning.pytorch.callbacks import DeviceStatsMonitor
+from train import config
 
 if __name__ == "__main__":
-
+    print('start')
     wandb_logger = WandbLogger(project="SIS_estimation")
-    dm = MSGDataModule(batch_size=config.BATCH_SIZE, num_workers=24, patch_size=config.INPUT_SIZE)
+    dm = MSGDataModule(batch_size=config.BATCH_SIZE, num_workers=config.NUM_WORKERS, patch_size=config.INPUT_SIZE)
 
+    print('dm')
 
-    model = FNO2d(modes=(16,16), input_channels=config.INPUT_CHANNELS, output_channels=config.OUTPUT_CHANNELS, channels=20)
+    model = FNO2d(modes=(24,24), input_channels=config.INPUT_CHANNELS, output_channels=config.OUTPUT_CHANNELS, channels=10)
     
     print(model.parameters())
     estimator = LitEstimator(
         model = model,
         learning_rate = config.LEARNING_RATE,
     )
+    print('model')
     trainer = Trainer(
+        # profiler='simple',
+        # callbacks=[DeviceStatsMonitor(cpu_stats=true)]
+        num_sanity_val_steps=2,
         logger=wandb_logger,
         accelerator=config.ACCELERATOR,
         devices=config.DEVICES,
@@ -31,3 +35,4 @@ if __name__ == "__main__":
         log_every_n_steps=1,
     )
     trainer.fit(model=estimator, train_dataloaders=dm)
+

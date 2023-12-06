@@ -20,7 +20,7 @@ class LitEstimator(L.LightningModule):
 
     def training_step(self, batch, batch_idx):
         loss, y_hat, y = self._shared_eval_step(batch, batch_idx)
-        self.log('loss', loss, logger=True, on_step=True)
+        self.log('loss', loss, logger=True, on_step=True, on_epoch=True)
         return loss
     
     def validation_step(self, batch, batch_idx):
@@ -29,7 +29,9 @@ class LitEstimator(L.LightningModule):
         return loss
 
     def test_step(self, batch, batch_idx, dataloader_idx=0):
-        return self.forward(batch)
+        loss, y_hat, y = self._shared_eval_step(batch, batch_idx)
+        self.log('test_loss', loss, on_epoch=True, logger=True)
+        return loss
 
     def _shared_eval_step(self, batch, batch_idx):
         x, y = batch
