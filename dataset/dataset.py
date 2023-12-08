@@ -57,10 +57,10 @@ class MSGDataset(Dataset):
             raise ValueError('There is no zarr dataset to get images from.')
         
 class MSGDatasetBatched(Dataset):
-    def __init__(self, zarr_store, y_var =None, x_vars=None, patch_size = (64,64), transform=None, target_transform=None):
+    def __init__(self, zarr_store, y_var =None, x_vars=None, patch_size = (64,64), batch_size=10, transform=None, target_transform=None):
 
         self.ds = xarray.open_zarr(zarr_store, )
-        self.generator = BatchGenerator(self.ds, input_dims={'time':1, 'lat':patch_size[1], 'lon':patch_size[0]},)
+        self.generator = BatchGenerator(self.ds, input_dims={'lat':patch_size[1], 'lon':patch_size[0]}, batch_dims={'time':batch_size})
         self.transform = transform
         self.target_transform = target_transform
         self.attrs = self.ds.attrs
@@ -91,10 +91,13 @@ class MSGDatasetBatched(Dataset):
                 )
 
         a= self.generator[idx]
+        # a= a[['sample', 'lon','lat']]
+        # import pdb
+        # pdb.set_trace()
         X_batch = torch.tensor(a[self.x_vars].to_array().values)#, names=('B','C','T', 'X', 'Y')) 
         y_batch = torch.tensor(a[self.y_var].values)#, names=('B', 'T', 'X', 'Y'))  
         
-        X_batch = X_batch.squeeze() #Squeeze out time dimension 
+        X_batch = X_batch.squeeze().permute(1,0,2,3) #Squeeze out time dimension 
         y_batch = y_batch.squeeze() #.squeeze(-2).unsqueeze(1) (B, T, X, Y) -> (B, C, X, Y) where dim(C)=1
         if self.transform:
             X_batch = self.transform(X_batch)
@@ -103,6 +106,23 @@ class MSGDatasetBatched(Dataset):
             y_batch = self.target_transform(y_batch)
         return X_batch, y_batch # ('B', 'C', 'X', 'Y') &  ('B', 'X', 'Y')
 
+    def get_xarray_batch(self, idx) -> Tuple[xarray.DataArray, xarray.DataArray]:
+        '''returns a batch in xarray.DataArray form'''
+        if torch.is_tensor(idx):
+            idx = idx.tolist()
+            if len(idx) == 1:
+                idx = idx[0]
+            else:
+                raise NotImplementedError(
+                    f"{type(self).__name__}.__getitem__ currently requires a single integer key"
+                )
+
+        a= self.generator[idx]
+
+        X_batch = a[self.x_vars].to_array() 
+        y_batch = a[[self.y_var]].to_array()
+        
+        return X_batch, y_batch # ('B', 'C', 'X', 'Y') &  ('B', 'X', 'Y')
 
 
 class MSGDataModule(L.LightningDataModule):
@@ -117,29 +137,31 @@ class MSGDataModule(L.LightningDataModule):
             if self.patch_size is not None:
                 # Using xbatcher to make batches of patched data
                 with benchmark('set up batch generator for patches'):
-                    self.msg_train = MSGDatasetBatched('/scratch/snx3000/kschuurm/DATA/train.zarr', y_var='SIS', patch_size=self.patch_size)
-                    self.msg_validation = MSGDatasetBatched('/scratch/snx3000/kschuurm/DATA/valid.zarr', y_var='SIS', patch_size=self.patch_size)
+                    self.msg_train = MSGDatasetBatched('/scratch/snx3000/kschuurm/DATA/train.zarr', y_var='SIS', patch_size=self.patch_size, batch_size=self.batch_size)
+                    self.msg_validation = MSGDatasetBatched('/scratch/snx3000/kschuurm/DATA/valid.zarr', y_var='SIS', patch_size=self.patch_size, batch_size=self.batch_size)
             else:
                 self.msg_train = MSGDataset('/scratch/snx3000/kschuurm/DATA/train.zarr', y_var='SIS')
                 self.msg_validation = MSGDataset('/scratch/snx3000/kschuurm/DATA/validation.zarr', y_var='SIS')
 
         if stage == 'test':
             if self.patch_size is not None:
-                self.msg_test = MSGDatasetBatched('/scratch/snx3000/kschuurm/DATA/validation.zarr', y_var='SIS', patch_size=self.patch_size)
+                self.msg_test = MSGDatasetBatched('/scratch/snx3000/kschuurm/DATA/validation.zarr', y_var='SIS', patch_size=self.patch_size, batch_size=self.batch_size)
             else:
                 self.msg_test = MSGDataset('/scratch/snx3000/kschuurm/DATA/test.zarr', y_var='SIS')
 
     def prepare_data(self):
+        
+        
         pass
 
     def train_dataloader(self):
-        return DataLoader(self.msg_train, batch_size=self.batch_size, num_workers=self.num_workers, drop_last=True, shuffle=True)
+        return DataLoader(self.msg_train, batch_size=None, num_workers=self.num_workers)
 
     def val_dataloader(self):
-        return DataLoader(self.msg_validation, batch_size=self.batch_size, num_workers=self.num_workers, drop_last=True)
+        return DataLoader(self.msg_validation, batch_size=None, num_workers=self.num_workers)
 
     def test_dataloader(self):
-        return DataLoader(self.msg_test, batch_size=self.batch_size, num_workers=self.num_workers, drop_last=True)
+        return DataLoader(self.msg_test, batch_size=None, num_workers=self.num_workers)
 
 
 

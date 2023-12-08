@@ -8,25 +8,22 @@ from models.LightningModule import LitEstimator
 from train import config
 
 if __name__ == "__main__":
-    print('start')
-    wandb_logger = WandbLogger(project="SIS_estimation")
+    # wandb_logger = WandbLogger(project="SIS_estimation")
     dm = MSGDataModule(batch_size=config.BATCH_SIZE, num_workers=config.NUM_WORKERS, patch_size=config.INPUT_SIZE)
-
-    print('dm')
 
     model = FNO2d(modes=(24,24), input_channels=config.INPUT_CHANNELS, output_channels=config.OUTPUT_CHANNELS, channels=10)
     
-    print(model.parameters())
     estimator = LitEstimator(
         model = model,
         learning_rate = config.LEARNING_RATE,
     )
     print('model')
     trainer = Trainer(
-        # profiler='simple',
+        # fast_dev_run=True,
+        profiler='simple',
         # callbacks=[DeviceStatsMonitor(cpu_stats=true)]
         num_sanity_val_steps=2,
-        logger=wandb_logger,
+        # logger=wandb_logger,
         accelerator=config.ACCELERATOR,
         devices=config.DEVICES,
         min_epochs=config.MIN_EPOCHS,
