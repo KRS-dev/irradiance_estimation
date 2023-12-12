@@ -1,6 +1,7 @@
 import xarray
 import random
 import matplotlib.pyplot as plt
+from matplotlib import colors
 import numpy as np
 import cartopy.crs as ccrs
 import cartopy.feature as cf
@@ -15,17 +16,21 @@ def plot_patches(y, y_hat, n_patches = 4):
 
     shape = y.shape
 
-    y_patches , y_hat_patches = y[:n_patches, : ,:], y_hat[:n_patches, :, :]
-
-    y_patches = y_patches.reshape(-1, shape[1])
-    y_hat_patches = y_hat_patches.reshape(-1, shape[1])
+    y_patches = y[:n_patches, :, :]
+    y_hat_patches = y_hat[:n_patches, :, :]
+    y_patches = np.transpose(y_patches, (2,0,1)).reshape(shape[1], -1)
+    y_hat_patches = np.transpose(y_hat_patches, (2,0,1)).reshape(shape[1], -1)
 
     fig, axes = plt.subplots(2,1, sharex=True, sharey=True)
 
-    axes[0].imshow(y_patches, vmin=VMIN, vmax=VMAX)
+    vmin = 0
+    vmax = y_patches.reshape(-1).max()
+    im2 = axes[0].imshow(y_patches, vmin=vmin, vmax=vmax)
     axes[0].set_title('Target')
-    axes[1].imshow(y_hat_patches, vmin=VMIN, vmax=VMAX)
+    im = axes[1].imshow(y_hat_patches,vmin=vmin, vmax=vmax)
     axes[1].set_title('Prediction')
+    fig.colorbar(im)
+    fig.colorbar(im2)
 
     return fig
 
@@ -33,14 +38,15 @@ def plot_patches(y, y_hat, n_patches = 4):
 def scatter_hist(x, y, ax, ax_histx, ax_histy, cax, output_var = 'SIS'):
     # no labels
     c_hist = 'grey'
+    bins = 100
     ax_histx.tick_params(axis="both", labelbottom=False, labelleft=False)
     ax_histy.tick_params(axis="both", labelleft=False, labelbottom=False)
 
     # the scatter plot:
-    _,_,_, hist = ax.hist2d(x, y, bins=100, cmap='hot_r', norm=colors.LogNorm())
-    ax.set_xlim([VMIN,VMAX])
-    ax.set_ylim([VMIN,VMAX])
-    ax.set_aspect('equal')
+    _,_,_, hist = ax.hist2d(x, y, bins=bins, cmap='hot_r', norm=colors.LogNorm())
+    # ax.set_xlim([VMIN,VMAX])
+    # ax.set_ylim([VMIN,VMAX])
+    # ax.set_aspect('equal')
     ax.plot([VMIN, VMAX], [VMIN,VMAX], '--')
 
     ax.get_figure().colorbar(hist, ax=ax, cax=cax, )
@@ -49,11 +55,13 @@ def scatter_hist(x, y, ax, ax_histx, ax_histy, cax, output_var = 'SIS'):
     cax.tick_params(axis='both', which='both', direction='in', labelleft=True, labelright=False, left=True, right=False)
 
     # now determine nice limits by hand:
-    binwidth = 0.01
-    xymax = max(np.max(np.abs(x)), np.max(np.abs(y)))
-    lim = (int(xymax/binwidth) + 1) * binwidth
+    xymax = max(np.max(x), np.max(y))
+    xymin = min(np.min(x), np.min(y))
+    interval = xymax - xymin
+    binwidth = interval/bins
+    # lim = (int(interval/binwidth) + 1) * binwidth
     # plot_importanced
-    bins = np.arange(-lim, lim + binwidth, binwidth)
+    bins = np.arange(xymin, xymax, binwidth)
     ax_histx.hist(x, bins=bins, color=c_hist, density=True)
     ax_histy.hist(y, bins=bins, color=c_hist, orientation='horizontal', density=True)
     ax_histx.set_title(f'{output_var}')
@@ -87,22 +95,19 @@ def prediction_error_plot(y, y_hat, output_var='SIS'):
     return fig
 
 
-def best_worst_plot(y:xarray.DataArray, y_hat:torch.Tensor, output_var='SIS', metric=None):
+def best_worst_plot(y:xarray.DataArray, y_hat:torch.Tensor, loss=None,  output_var='SIS', metric=None, best=True):
 
-    y_hat = xarray.DataArray(data=y_hat.numpy(),
-                             coords= y.coords)
-    if metric is None:
-        # calculate relative RMSE
-        error = np.sqrt((y - y_hat)**2)
-    else:
-        error = metric(y, y_hat)    
+
+    ds = y.to_dataset(dim='variable')
+    ds = ds.rename({output_var: 'y'})
+    ds = ds.assign(y_hat= (('lat', 'lon'), y_hat.numpy()))
     
-    error_per_patch = error.mean(dim=['lat', 'lon'])
-    idxmax = error_per_patch.idxmax()
-    idxmin = error_per_patch.idxmin()
+    metric_name = str(metric).replace('()', '') if metric is not None else "RMSE"
+
     proj = ccrs.PlateCarree()
-    fig, ax = plt.subplots(2,2, figsize=(12,6), subplot_kw={'projection': proj},)
-    fig.suptitle(output_var)
+    cmap = 'viridis'
+    fig, ax = plt.subplots(1,2, figsize=(12,6), subplot_kw={'projection': proj},)
+    fig.suptitle(f'{"Best" if best else "Worst"} {output_var} prediction in {metric_name}')
     for axi in ax.flatten():
         axi.add_feature(cf.BORDERS)
         axi.xaxis.set_major_locator(LongitudeLocator())
@@ -110,30 +115,35 @@ def best_worst_plot(y:xarray.DataArray, y_hat:torch.Tensor, output_var='SIS', me
         axi.xaxis.set_major_formatter(LongitudeFormatter())
         axi.yaxis.set_major_formatter(LatitudeFormatter())
 
-    y.sel(time=idxmin).plot.imshow(
-        ax=ax[0,0],
-        vmin=VMIN,
-        vmax=VMAX,
+    vmin = min(ds.y.min(), ds.y_hat.min())
+    vmax = max(ds.y.max(), ds.y_hat.max())
+
+    ds.y.plot.imshow(
+        ax=ax[0],
+        vmin=vmin,
+        vmax=vmax,
+        transform=proj,
+        cmap=cmap,
+    )
+    ax[0].text(-0.4, 0.55, f'{metric_name}={loss:.3f}' , va='bottom', ha='center',
+        rotation='vertical', rotation_mode='anchor',
+        transform=ax[0].transAxes)
+    
+    ds.y_hat.plot.imshow(
+        ax=ax[1],
+        vmin=vmin,
+        vmax=vmax,
+        cmap=cmap,
         transform=proj,
     )
-    y_hat.sel(time=idxmin).plot.imshow(
-        ax=ax[0, 1],
-        vmin=VMIN,
-        vmax=VMAX,
-        transform=proj,
-    )
-    y.sel(time=idxmax).plot.imshow(
-        ax=ax[1,0],
-        vmin=VMIN,
-        vmax=VMAX,
-        transform=proj,
-    )
-    y_hat.sel(time=idxmax).plot.imshow(
-        ax=ax[1,1],
-        vmin=VMIN,
-        vmax=VMAX,
-        transform=proj,
-    )
+
+    for axi in ax.flatten():
+        axi.add_feature(cf.BORDERS)
+        gl = axi.gridlines(crs=proj, linewidth=0.5, color='black', alpha=0.5, linestyle='--', draw_labels=True)
+        gl.top_labels = False
+        gl.left_labels = True
+        gl.right_labels =False
+        gl.xlines = True
     fig.tight_layout()
 
     return fig
