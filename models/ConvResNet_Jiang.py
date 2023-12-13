@@ -6,22 +6,23 @@ from torch.nn.parameter import Parameter
 
 class ResBlock(nn.Module):
     def __init__(self, in_channels, hidden_channels, kernel_size, out_channels=None):
+        super(ResBlock, self).__init__()
         if out_channels is None:
             out_channels = hidden_channels
 
         self.conv1 = nn.Sequential(
-            nn.conv2d(in_channels, hidden_channels, kernel_size, padding="same"),
+            nn.Conv2d(in_channels, hidden_channels, kernel_size, padding="same"),
             nn.BatchNorm2d(hidden_channels),
             nn.ReLU(),
         )
         self.conv2 = nn.Sequential(
-            nn.conv2d(hidden_channels, hidden_channels, kernel_size, padding="same"),
+            nn.Conv2d(hidden_channels, hidden_channels, kernel_size, padding="same"),
             nn.BatchNorm2d(hidden_channels),
             nn.ReLU(),
         )
 
         self.conv3 = nn.Sequential(
-            nn.conv2d(hidden_channels, out_channels, kernel_size, padding="same"),
+            nn.Conv2d(hidden_channels, out_channels, kernel_size, padding="same"),
             nn.BatchNorm2d(out_channels),
             nn.ReLU(),
         )
@@ -35,11 +36,13 @@ class ResBlock(nn.Module):
 
 class ConvResNet(nn.Module):
     def __init__(self, num_attr: int):
+        super(ConvResNet, self).__init__()
+
         self.conv1 = nn.Sequential(
-            nn.conv2d(1, 64, 3, padding="same"), nn.BatchNorm2d(64), nn.ReLU()
+            nn.Conv2d(1, 64, 3, padding="same"), nn.BatchNorm2d(64), nn.ReLU()
         )
         self.conv2 = nn.Sequential(
-            nn.conv2d(1, 64, 3, padding="same"), nn.BatchNorm2d(64), nn.ReLU()
+            nn.Conv2d(64, 64, 3, padding="same"), nn.BatchNorm2d(64), nn.ReLU()
         )
         self.mp1 = nn.MaxPool2d(2, 2)
 
@@ -74,8 +77,8 @@ class ConvResNet(nn.Module):
         x = self.resblocks2(x)  # B C H W
         x = torch.mean(x, dim=(2, 3))  # B C, Global Average pooling the H and W
 
-        x = torch.stack(
-            [x, x_attrs], dim=-1
+        x = torch.hstack(
+            [x, x_attrs]
         )  # batch_size x 256+6, Stack along the Channel dim
         x = self.mlp(x)
 

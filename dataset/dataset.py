@@ -400,6 +400,7 @@ class MSGDataModule(L.LightningDataModule):
         patch_size: (int, int) = None,
         num_workers: int = 12,
         x_vars=None,
+        y_vars=['SIS'],
         transform=None,
         target_transform=None
     ):
@@ -408,7 +409,8 @@ class MSGDataModule(L.LightningDataModule):
         self.patch_size = patch_size
         self.num_workers = num_workers
         self.x_vars = x_vars
-        self.tranform = transform
+        self.y_vars = y_vars
+        self.transform = transform
         self.target_transform = target_transform
 
     def setup(self, stage: str):
@@ -501,22 +503,28 @@ class MSGDataModulePoint(MSGDataModule):
             # Using xbatcher to make batches of patched data
             self.train_dataset = MSGDatasetPoint(
                 "/scratch/snx3000/kschuurm/DATA/train.zarr",
-                y_vars=["SIS"],
+                y_vars=self.y_vars,
+                x_vars=self.x_vars,
                 patch_size=self.patch_size,
-                batch_size=self.batch_size,
+                transform=self.transform,
+                target_transform=self.target_transform
             )
             self.val_dataset = MSGDatasetPoint(
                 "/scratch/snx3000/kschuurm/DATA/valid.zarr",
-                y_vars=["SIS"],
+                y_vars=self.y_vars,
+                x_vars=self.x_vars,
                 patch_size=self.patch_size,
-                batch_size=self.batch_size,
+                transform=self.transform,
+                target_transform=self.target_transform
             )
         if stage == "test":
             self.test_dataset = MSGDatasetBatched(
                 "/scratch/snx3000/kschuurm/DATA/validation.zarr",
-                y_vars=["SIS"],
+                y_vars=self.y_vars,
+                x_vars=self.x_vars,
                 patch_size=self.patch_size,
-                batch_size=self.batch_size,
+                transform=self.transform,
+                target_transform=self.target_transform
             )
 
 
@@ -566,7 +574,7 @@ if __name__ == "__main__":
         target_transform=minmax_normalizer
     )
 
-    ds2 = MSGDatasetPoint(
+    ds3 = MSGDatasetPoint(
         "/scratch/snx3000/kschuurm/DATA/valid.zarr",
         y_vars=["SIS", "SRTM"],
         x_vars=["channel_1", "channel_10"],

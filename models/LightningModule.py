@@ -1,6 +1,6 @@
 from typing import Any
 from torch.optim import Adam
-from torchmetrics import RelativeSquaredError, MeanSquaredError
+from torchmetrics import RelativeSquaredError, MeanSquaredError, R2Score, MeanAbsoluteError, MetricCollection
 import torch.nn as nn
 import torch.nn.functional as F
 import pytorch_lightning as L
@@ -75,6 +75,63 @@ class LitEstimator(L.LightningModule):
         # import pdb
         # pdb.set_trace()
         y_hat = self.forward(x)
+        y_flat = y.reshape(-1)
+        y_hat_flat = y_hat.view(-1)
+        loss = self.metric(y_hat_flat, y_flat)
+        return loss, y_hat.squeeze(), y.squeeze()
+
+    def configure_optimizers(self):
+        optimizer = Adam(self.parameters(), lr=self.lr)
+        scheduler = CosineAnnealingLR(optimizer, T_max=5)
+        return {"optimizer": optimizer, "lr_scheduler": scheduler}
+
+class LitEstimatorPoint(L.LightningModule):
+    def __init__(self, learning_rate, model, dm):
+        super().__init__()
+        self.lr = learning_rate
+        self.model = model
+        self.metric = RelativeSquaredError()
+        self.other_metrics = MetricCollection([MeanSquaredError(), MeanAbsoluteError(), R2Score()])
+        self.dm = dm
+        self.y = []
+        self.y_hat =[]
+        self.save_hyperparameters(ignore=["dm","y","y_hat"])
+
+    def training_step(self, batch, batch_idx):
+        loss, y_hat, y = self._shared_eval_step(batch, batch_idx)
+        self.log("loss", loss, logger=True, on_epoch=True, prog_bar=True)
+        return loss
+
+    def validation_step(self, batch, batch_idx):
+        loss, y_hat, y = self._shared_eval_step(batch, batch_idx)
+        self.log("val_loss", loss, on_epoch=True, logger=True, prog_bar=True)
+        self.y.append(y)
+        self.y_hat.append(y_hat)
+        return loss
+
+    def test_step(self, batch, batch_idx, dataloader_idx=0):
+        loss, y_hat, y = self._shared_eval_step(batch, batch_idx)
+        self.log("test_loss", loss, on_epoch=True, logger=True)
+        return loss
+
+    def on_validation_epoch_end(self):
+        y = torch.stack(self.y)
+        y_hat = torch.stack(self.y_hat)
+        losses = self.other_metrics(y_hat, y)
+        self.log_dict(losses, logger=True)
+    
+    def on_validation_epoch_start(self):
+        self.y = []
+        self.y_hat = []
+
+    def forward(self, X, x_attrs):
+        return self.model(X,x_attrs)
+    
+    def _shared_eval_step(self, batch, batch_idx):
+        X, x, y = batch
+        # import pdb
+        # pdb.set_trace()
+        y_hat = self.forward(X.float(), x.float())
         y_flat = y.reshape(-1)
         y_hat_flat = y_hat.view(-1)
         loss = self.metric(y_hat_flat, y_flat)
