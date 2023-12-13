@@ -20,7 +20,7 @@ if __name__ == '__main__':
         #            ).chunk({'time':1, 'lat':-1, 'lon':-1})
         
         phts = [pth for pth in glob('customized/HRSEVIRI_201*')]
-        dss = [ xarray.open_dataset(pth, engine='h5netcdf').chunk({'time':1, 'lat':-1, 'lon':-1}) for pth in phts]
+        dss = [ xarray.open_dataset(pth, engine='h5netcdf').chunk({'time':60, 'lat':-1, 'lon':-1}) for pth in phts]
          
         ds_big = xarray.concat(dss, dim='time', data_vars='minimal', compat='equals', coords= 'minimal')
 
