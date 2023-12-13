@@ -8,17 +8,19 @@ import config
 if __name__ == "__main__":
     wandb_logger = WandbLogger(project="SIS_estimation")
 
-    dm = MSGDataModule(batch_size=config.BATCH_SIZE) # contains all the dataloaders, does train test split etc. Access dataloader by runing dm.train_dataloader
+    dm = MSGDataModule(
+        batch_size=config.BATCH_SIZE
+    )  # contains all the dataloaders, does train test split etc. Access dataloader by runing dm.train_dataloader
 
     model = FNO2d_estimation(
-        n_modes_height =10,
-        n_modes_width =10,
-        hidden_channels = 20,
+        n_modes_height=10,
+        n_modes_width=10,
+        hidden_channels=20,
     )
 
     LitEstimator(
-        learning_rate = config.LEARNING_RATE,
-        model = model,
+        learning_rate=config.LEARNING_RATE,
+        model=model,
     )
 
     trainer = Trainer(
@@ -29,5 +31,3 @@ if __name__ == "__main__":
         max_epochs=config.MAX_EPOCHS,
         precision=config.PRECISION,
     )
-
-    

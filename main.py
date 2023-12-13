@@ -9,18 +9,27 @@ from train import config
 
 if __name__ == "__main__":
     # wandb_logger = WandbLogger(project="SIS_estimation")
-    dm = MSGDataModule(batch_size=config.BATCH_SIZE, num_workers=config.NUM_WORKERS, patch_size=config.INPUT_SIZE)
-
-    model = FNO2d(modes=(24,24), input_channels=config.INPUT_CHANNELS, output_channels=config.OUTPUT_CHANNELS, channels=10)
-    
-    estimator = LitEstimator(
-        model = model,
-        learning_rate = config.LEARNING_RATE,
+    dm = MSGDataModule(
+        batch_size=config.BATCH_SIZE,
+        num_workers=config.NUM_WORKERS,
+        patch_size=config.INPUT_SIZE,
     )
-    print('model')
+
+    model = FNO2d(
+        modes=(24, 24),
+        input_channels=config.INPUT_CHANNELS,
+        output_channels=config.OUTPUT_CHANNELS,
+        channels=10,
+    )
+
+    estimator = LitEstimator(
+        model=model,
+        learning_rate=config.LEARNING_RATE,
+    )
+    print("model")
     trainer = Trainer(
         # fast_dev_run=True,
-        profiler='simple',
+        profiler="simple",
         # callbacks=[DeviceStatsMonitor(cpu_stats=true)]
         num_sanity_val_steps=2,
         # logger=wandb_logger,
@@ -32,4 +41,3 @@ if __name__ == "__main__":
         log_every_n_steps=1,
     )
     trainer.fit(model=estimator, train_dataloaders=dm)
-

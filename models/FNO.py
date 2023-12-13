@@ -1,4 +1,3 @@
-
 import numpy as np
 import torch
 import torch.nn as nn
@@ -29,10 +28,15 @@ class SpectralConv1d(nn.Module):
 
         self.in_channels = in_channels
         self.out_channels = out_channels
-        self.modes1 = modes1  #Number of Fourier modes to multiply, at most floor(N/2) + 1
+        self.modes1 = (
+            modes1  # Number of Fourier modes to multiply, at most floor(N/2) + 1
+        )
 
-        self.scale = (1 / (in_channels*out_channels))
-        self.weights1 = nn.Parameter(self.scale * torch.rand(in_channels, out_channels, self.modes1, dtype=torch.cfloat))
+        self.scale = 1 / (in_channels * out_channels)
+        self.weights1 = nn.Parameter(
+            self.scale
+            * torch.rand(in_channels, out_channels, self.modes1, dtype=torch.cfloat)
+        )
 
     # Complex multiplication
     def compl_mul1d(self, input, weights):
@@ -41,17 +45,26 @@ class SpectralConv1d(nn.Module):
 
     def forward(self, x):
         batchsize = x.shape[0]
-        #Compute Fourier coeffcients up to factor of e^(- something constant)
+        # Compute Fourier coeffcients up to factor of e^(- something constant)
         x_ft = torch.fft.rfft(x)
 
         # Multiply relevant Fourier modes
-        out_ft = torch.zeros(batchsize, self.out_channels, x.size(-1)//2 + 1,  device=x.device, dtype=torch.cfloat)
-        out_ft[:, :, :self.modes1] = self.compl_mul1d(x_ft[:, :, :self.modes1], self.weights1)
+        out_ft = torch.zeros(
+            batchsize,
+            self.out_channels,
+            x.size(-1) // 2 + 1,
+            device=x.device,
+            dtype=torch.cfloat,
+        )
+        out_ft[:, :, : self.modes1] = self.compl_mul1d(
+            x_ft[:, :, : self.modes1], self.weights1
+        )
 
-        #Return to physical space
+        # Return to physical space
         x = torch.fft.irfft(out_ft, n=x.size(-1))
         return x
-    
+
+
 ################################################################
 #  2d fourier layer
 ################################################################
@@ -66,10 +79,21 @@ class SpectralConv2d(L.LightningModule):
         self.in_channels = in_channels
         self.out_channels = out_channels
         self.modes_height = modes[0]
-        self.modes_width = modes[1]  #Number of Fourier modes to multiply, at most floor(N/2) + 1
+        self.modes_width = modes[
+            1
+        ]  # Number of Fourier modes to multiply, at most floor(N/2) + 1
 
-        self.scale = (1 / (in_channels*out_channels))
-        self.weights1 = nn.Parameter(self.scale * torch.rand(in_channels, out_channels, self.modes_height, self.modes_width, dtype=torch.cfloat))
+        self.scale = 1 / (in_channels * out_channels)
+        self.weights1 = nn.Parameter(
+            self.scale
+            * torch.rand(
+                in_channels,
+                out_channels,
+                self.modes_height,
+                self.modes_width,
+                dtype=torch.cfloat,
+            )
+        )
 
     # Complex multiplication
     def compl_mul1d(self, input, weights):
@@ -78,16 +102,26 @@ class SpectralConv2d(L.LightningModule):
 
     def forward(self, x):
         batchsize = x.shape[0]
-        #Compute Fourier coeffcients up to factor of e^(- something constant)
+        # Compute Fourier coeffcients up to factor of e^(- something constant)
         x_ft = torch.fft.rfft2(x)
 
         # Multiply relevant Fourier modes
-        out_ft = torch.zeros(batchsize, self.out_channels, x.size(-2)//2 + 1, x.size(-1)//2 + 1, device=x.device, dtype=torch.cfloat)
-        out_ft[:, :, :self.modes_height, :self.modes_width] = self.compl_mul1d(x_ft[:, :, :self.modes_height, :self.modes_width], self.weights1)
+        out_ft = torch.zeros(
+            batchsize,
+            self.out_channels,
+            x.size(-2) // 2 + 1,
+            x.size(-1) // 2 + 1,
+            device=x.device,
+            dtype=torch.cfloat,
+        )
+        out_ft[:, :, : self.modes_height, : self.modes_width] = self.compl_mul1d(
+            x_ft[:, :, : self.modes_height, : self.modes_width], self.weights1
+        )
 
-        #Return to physical space
+        # Return to physical space
         x = torch.fft.irfft2(out_ft, s=(x.size(-2), x.size(-1)))
         return x
+
 
 class FNO2d(nn.Module):
     def __init__(self, modes, input_channels, output_channels, channels):
@@ -110,8 +144,10 @@ class FNO2d(nn.Module):
         self.channels = channels
         self.input_channels = input_channels
         self.output_channels = output_channels
-        self.padding = 2 # pad the domain if input is non-periodic
-        self.fc0 = nn.Linear(self.input_channels + 2, self.channels) # input channel is 2: (a(x), x)
+        self.padding = 2  # pad the domain if input is non-periodic
+        self.fc0 = nn.Linear(
+            self.input_channels + 2, self.channels
+        )  # input channel is 2: (a(x), x)
 
         self.conv0 = SpectralConv2d(self.channels, self.channels, self.modes)
         self.conv1 = SpectralConv2d(self.channels, self.channels, self.modes)
@@ -127,11 +163,11 @@ class FNO2d(nn.Module):
 
     def forward(self, x):
         grid = self.get_grid(x.shape, x.device)
-        x = torch.cat((x, grid), dim=1) # (B, C, X, Y) 
+        x = torch.cat((x, grid), dim=1)  # (B, C, X, Y)
 
-        x = x.permute(0,2,3,1) # (B, X, Y, C)
+        x = x.permute(0, 2, 3, 1)  # (B, X, Y, C)
         x = self.fc0(x)
-        x = x.permute(0,3,1,2) # (B, C, X, Y)
+        x = x.permute(0, 3, 1, 2)  # (B, C, X, Y)
         # x = F.pad(x, [0,self.padding]) # pad the domain if input is non-periodic
 
         x1 = self.conv0(x)
@@ -155,21 +191,24 @@ class FNO2d(nn.Module):
         x = x1 + x2
 
         # x = x[..., :-self.padding] # pad the domain if input is non-periodic
-        x = x.permute(0,2,3,1) # (B, X, Y, C)
+        x = x.permute(0, 2, 3, 1)  # (B, X, Y, C)
         x = self.fc1(x)
         x = F.gelu(x)
         x = self.fc2(x)
-        x = x.permute(0,3,1,2) # (B, C, X, Y)
-        return x # (B, 1, X, Y)
+        x = x.permute(0, 3, 1, 2)  # (B, C, X, Y)
+        return x  # (B, 1, X, Y)
 
     def get_grid(self, shape, device):
         batchsize, size_x, size_y = shape[0], shape[2], shape[3]
         gridx = torch.tensor(np.linspace(0, 1, size_x), dtype=torch.float)
         gridy = torch.tensor(np.linspace(0, 1, size_y), dtype=torch.float)
-        xx, yy = torch.meshgrid(gridx, gridy, indexing='ij')
-        grid = torch.concat((xx.reshape(1, size_x, size_y), yy.reshape(1, size_x, size_y)), dim=0).reshape(1, 2, size_x, size_y)
+        xx, yy = torch.meshgrid(gridx, gridy, indexing="ij")
+        grid = torch.concat(
+            (xx.reshape(1, size_x, size_y), yy.reshape(1, size_x, size_y)), dim=0
+        ).reshape(1, 2, size_x, size_y)
         grid = grid.repeat([batchsize, 1, 1, 1])
         return grid.to(device)
+
 
 class FNO1d(nn.Module):
     def __init__(self, modes, width):
@@ -190,8 +229,8 @@ class FNO1d(nn.Module):
 
         self.modes1 = modes
         self.width = width
-        self.padding = 2 # pad the domain if input is non-periodic
-        self.fc0 = nn.Linear(2, self.width) # input channel is 2: (a(x), x)
+        self.padding = 2  # pad the domain if input is non-periodic
+        self.fc0 = nn.Linear(2, self.width)  # input channel is 2: (a(x), x)
 
         self.conv0 = SpectralConv1d(self.width, self.width, self.modes1)
         self.conv1 = SpectralConv1d(self.width, self.width, self.modes1)
@@ -236,7 +275,7 @@ class FNO1d(nn.Module):
         x = self.fc1(x)
         x = F.gelu(x)
         x = self.fc2(x)
-        return x 
+        return x
 
     def get_grid(self, shape, device):
         batchsize, size_x = shape[0], shape[1]
