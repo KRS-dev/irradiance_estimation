@@ -1,5 +1,7 @@
+from typing import Any, Tuple
 import xarray
-
+import numpy as np
+import torch
 
 MINMAX = {
     "SIS": (0.0, 1109.0),
@@ -15,26 +17,76 @@ MINMAX = {
     "channel_7": (3.807188034057617, 108.10502624511719),
     "channel_8": (9.00473403930664, 74.256103515625),
     "channel_9": (10.230449676513672, 165.13319396972656),
+    "dayofyear": (1, 365),
+    "lat": (-90, 90),
+    "lon": (-180, 180),
+    "SZA": (0, np.pi/2)
 }
 
-
 class MinMax:
-    def forward_dataset(ds: xarray.Dataset):
+    def __init__(self):
+        pass
+    
+    def __call__(self, array, vars=None):
+        if isinstance(array, xarray.Dataset):
+            output = self.forward_dataset(array)
+        elif vars is not None:
+            output = self.forward_array(array, vars)
+        else:
+            raise ValueError(f'{type(array)} is not a {type(xarray.Dataset)} and vars are not specified.')
+        return output
+
+    def inverse(self, array, vars=None):
+        if isinstance(array, xarray.Dataset):
+            output = self.inverse_dataset(array)
+        elif vars is not None:
+            output = self.inverse_array(array, vars)
+        else:
+            raise ValueError(f'{type(array)} is not a {type(xarray.Dataset)} and vars are not specified.')
+
+        return output
+
+    def forward_dataset(self, ds: xarray.Dataset):
         for var in ds.keys():
             minvar, maxvar = MINMAX[var]
             ds[var] = (ds[var] - minvar) / (maxvar - minvar)
         return ds
 
-    def backward_dataset(ds: xarray.Dataset):
+    def inverse_dataset(self, ds: xarray.Dataset):
         for var in ds.keys():
             minvar, maxvar = MINMAX[var]
             ds[var] = ds[var] * (maxvar - minvar) + minvar
         return ds
 
-    def forward(array, var: str):
-        minvar, maxvar = MINMAX[var]
-        return (array - minvar) / (maxvar - minvar)
+    def forward_array(self, array, vars: Tuple[str]):
+        '''
+        MinMax normalization
+        Assumes vars are on the second dimension (Channels) in order of the vars given.
+        '''
+        if len(array.shape) != 1:  # Check for zero dimensional arrays
+            assert array.shape[1] == len(vars), f"{len(vars)} vars are not equal to {array.shape[1]} the number of channels in dim=1."
+        
+        if len(array.shape) == 1:
+            minvars = MINMAX[vars[0]][0]
+            maxvars = MINMAX[vars[0]][1]
+        else:
+            minvars = np.array([MINMAX[x][0] for x in vars]).reshape(1,-1)
+            maxvars = np.array([MINMAX[x][1] for x in vars]).reshape(1,-1)
+        return (array - minvars)/(maxvars - minvars)
 
-    def backward(array, var):
-        minvar, maxvar = MINMAX[var]
-        return array * (maxvar - minvar) + minvar
+
+    def inverse_array(self, array, vars: Tuple[str]):
+        '''
+        Inverse MinMax normalization
+        Assumes vars are on the second dimension (Channels) in order of the vars given.
+        '''
+        if len(array.shape) != 1: # Check for zero dimensional arrays
+            assert array.shape[1] == len(vars), f"{len(vars)} vars are not equal to {array.shape[1]} the number of channels in dim=1."
+        
+        if len(array.shape) == 1:
+            minvars = MINMAX[vars[0]][0]
+            maxvars = MINMAX[vars[0]][1]
+        else:
+            minvars = np.array([MINMAX[x][0] for x in vars]).reshape(1,-1)
+            maxvars = np.array([MINMAX[x][1] for x in vars]).reshape(1,-1)
+        return array * (maxvars - minvars) + minvars
