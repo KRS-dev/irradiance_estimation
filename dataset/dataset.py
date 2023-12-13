@@ -275,8 +275,12 @@ class MSGDatasetPoint(MSGDatasetBatched):
                 )
 
         X_batch, x_attributes, y = self.get_xarray_batch(idx)
-        X_batch = X_batch.fillna(-99999)  # for training we do not want any nans. 
-        x_attributes = x_attributes.fillna(-999999) #Very negative values should cancel with ReLU
+        X_batch = X_batch.fillna(-99)  # for training we do not want any nans. 
+        x_attributes = x_attributes.fillna(-99) #Very negative values should cancel with ReLU
+        if y.isnull().any():
+            print('nan in y')
+
+        # y = y.fillna(-99)
 
         X_batch = torch.tensor(X_batch.values)  # , names=('C', 'B', 'X', 'Y'))
         x_attributes = torch.tensor(x_attributes.values)  # ('B', 'C')
@@ -440,6 +444,7 @@ class MSGDataModule(L.LightningDataModule):
                     "/scratch/snx3000/kschuurm/DATA/train.zarr", 
                     y_vars=["SIS"],
                     x_vars=self.x_vars,
+                    batch_size=self.batch_size,
                     transform=self.tranform,
                     target_transform=self.target_transform
                 )
@@ -447,6 +452,7 @@ class MSGDataModule(L.LightningDataModule):
                     "/scratch/snx3000/kschuurm/DATA/validation.zarr", 
                     y_vars=["SIS"],
                     x_vars=self.x_vars,
+                    batch_size=self.batch_size,
                     transform=self.tranform,
                     target_transform=self.target_transform
                 )
@@ -505,6 +511,7 @@ class MSGDataModulePoint(MSGDataModule):
                 "/scratch/snx3000/kschuurm/DATA/train.zarr",
                 y_vars=self.y_vars,
                 x_vars=self.x_vars,
+                batch_size=self.batch_size,
                 patch_size=self.patch_size,
                 transform=self.transform,
                 target_transform=self.target_transform
@@ -513,6 +520,7 @@ class MSGDataModulePoint(MSGDataModule):
                 "/scratch/snx3000/kschuurm/DATA/valid.zarr",
                 y_vars=self.y_vars,
                 x_vars=self.x_vars,
+                batch_size=self.batch_size,
                 patch_size=self.patch_size,
                 transform=self.transform,
                 target_transform=self.target_transform
@@ -522,6 +530,7 @@ class MSGDataModulePoint(MSGDataModule):
                 "/scratch/snx3000/kschuurm/DATA/validation.zarr",
                 y_vars=self.y_vars,
                 x_vars=self.x_vars,
+                batch_size=self.batch_size,
                 patch_size=self.patch_size,
                 transform=self.transform,
                 target_transform=self.target_transform

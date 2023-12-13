@@ -1,6 +1,8 @@
 from typing import Any
 from torch.optim import Adam
-from torchmetrics import RelativeSquaredError, MeanSquaredError, R2Score, MeanAbsoluteError, MetricCollection
+from torchmetrics import Metric, RelativeSquaredError, MeanSquaredError, R2Score, MeanAbsoluteError, MetricCollection
+from torchmetrics.utilities import dim_zero_cat
+from torchmetrics.aggregation import MeanMetric
 import torch.nn as nn
 import torch.nn.functional as F
 import pytorch_lightning as L
@@ -9,13 +11,48 @@ from torch.optim.lr_scheduler import CosineAnnealingLR
 from utils.plotting import plot_patches
 import wandb
 
+class MyRelativeMeanSquaredError(Metric):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.add_state("preds", default=[], dist_reduce_fx="cat")
+        self.add_state("target", default=[], dist_reduce_fx="cat")
+
+    def update(self, preds, target) -> None:
+        self.preds.append(preds)
+        self.target.append(target)
+
+    def compute(self):
+        # parse inputs
+        preds = dim_zero_cat(self.preds)
+        target = dim_zero_cat(self.target)
+        # some intermediate computation...
+        
+        
+        # finalize the computations
+        loss = torch.nanmean( (target-preds)**2/target**2)
+        return loss
+
+def mse_loss_with_nans(input, target):
+
+    # Missing data are nan's
+    mask = torch.isnan(target)
+
+    # Missing data are 0's
+    # mask = target == 0
+
+    out = (input[~mask]-target[~mask])**2
+    loss = out.mean()
+
+    return loss
+
+
 
 class LitEstimator(L.LightningModule):
     def __init__(self, learning_rate, model, dm):
         super().__init__()
         self.lr = learning_rate
         self.model = model
-        self.metric = RelativeSquaredError()
+        self.metric = mse_loss_with_nans
         self.dm = dm
         self.save_hyperparameters(ignore=["dm"])
 
@@ -90,7 +127,7 @@ class LitEstimatorPoint(L.LightningModule):
         super().__init__()
         self.lr = learning_rate
         self.model = model
-        self.metric = RelativeSquaredError()
+        self.metric = MyRelativeMeanSquaredError()
         self.other_metrics = MetricCollection([MeanSquaredError(), MeanAbsoluteError(), R2Score()])
         self.dm = dm
         self.y = []
@@ -115,8 +152,8 @@ class LitEstimatorPoint(L.LightningModule):
         return loss
 
     def on_validation_epoch_end(self):
-        y = torch.stack(self.y)
-        y_hat = torch.stack(self.y_hat)
+        y = torch.stack(self.y).reshape(-1)
+        y_hat = torch.stack(self.y_hat).reshape(-1)
         losses = self.other_metrics(y_hat, y)
         self.log_dict(losses, logger=True)
     
