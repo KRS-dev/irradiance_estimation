@@ -28,7 +28,7 @@ parser.add_argument("-l", "--logdir", default=None)
 parser.add_argument(
     "-c", "--chain", default="HRSEVIRI", choices=["HRSEVIRI", "HRSEVIRI_HRV", "both"]
 )
-parser.add_argument("-roi", "--regionofinterest", default="65,35,-15,28")
+parser.add_argument("-roi", "--regionofinterest", default="62,35,-15,28")
 parser.add_argument(
     "-agg", "--aggregatetime", default="day", choices=["day", "week", "month"]
 )

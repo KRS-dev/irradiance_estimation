@@ -63,10 +63,10 @@ class MinMax:
         MinMax normalization
         Assumes vars are on the second dimension (Channels) in order of the vars given.
         '''
-        if len(array.shape) != 1:  # Check for zero dimensional arrays
+        if len(vars) > 1:  # Check for zero dimensional arrays
             assert array.shape[1] == len(vars), f"{len(vars)} vars are not equal to {array.shape[1]} the number of channels in dim=1."
         
-        if len(array.shape) == 1:
+        if len(vars) == 1:
             minvars = MINMAX[vars[0]][0]
             maxvars = MINMAX[vars[0]][1]
         else:
@@ -80,10 +80,10 @@ class MinMax:
         Inverse MinMax normalization
         Assumes vars are on the second dimension (Channels) in order of the vars given.
         '''
-        if len(array.shape) != 1: # Check for zero dimensional arrays
+        if len(vars) > 1: # Check for zero dimensional arrays
             assert array.shape[1] == len(vars), f"{len(vars)} vars are not equal to {array.shape[1]} the number of channels in dim=1."
         
-        if len(array.shape) == 1:
+        if len(vars) == 1:
             minvars = MINMAX[vars[0]][0]
             maxvars = MINMAX[vars[0]][1]
         else:

@@ -59,17 +59,6 @@ def chunk_zarr(zarr_store, patch_size, batch_size):
 
     i = len(full_ds.time)
     full_ds = full_ds.dropna(dim="time", how="all", subset=["SIS"])
-    x_vars = set(full_ds.variables) - {
-        "lat_bnds",
-        "lon_bnds",
-        "lat",
-        "lon",
-        "time",
-        "SIS",
-        "record_status",
-    }
-    for var in x_vars:
-        full_ds = full_ds.dropna(dim="time", how="all", subset=[var])
 
     print("dropped", len(full_ds.time) / i)
 
@@ -84,18 +73,11 @@ def chunk_zarr(zarr_store, patch_size, batch_size):
 
     print("split")
     train_ds = shuffle_timeindex(train_ds)
-    print(train_ds.time.values)
     print("shuffle")
 
-    train_ds.chunk(
-        {"time": batch_size, "lat": patch_size[1], "lon": patch_size[0]}
-    ).to_zarr("/scratch/snx3000/kschuurm/DATA/train.zarr", mode="w", safe_chunks=True)
-    valid_ds.chunk(
-        {"time": batch_size, "lat": patch_size[1], "lon": patch_size[0]}
-    ).to_zarr("/scratch/snx3000/kschuurm/DATA/valid.zarr", mode="w", safe_chunks=True)
-    test_ds.chunk(
-        {"time": batch_size, "lat": patch_size[1], "lon": patch_size[0]}
-    ).to_zarr("/scratch/snx3000/kschuurm/DATA/test.zarr", mode="w", safe_chunks=True)
+    train_ds.chunk({'time':batch_size, 'lat':patch_size[0], 'lon':patch_size[1]}).to_zarr("/scratch/snx3000/kschuurm/DATA/train.zarr", mode="w", safe_chunks=True)
+    valid_ds.to_zarr("/scratch/snx3000/kschuurm/DATA/valid.zarr", mode="w", safe_chunks=True)
+    test_ds.to_zarr("/scratch/snx3000/kschuurm/DATA/test.zarr", mode="w", safe_chunks=True)
     print("done")
 
 
@@ -105,4 +87,4 @@ if __name__ == "__main__":
 
         zarr_store = "/scratch/snx3000/kschuurm/DATA/HRSEVIRI.zarr"
 
-        chunk_zarr(zarr_store, (64, 64), 254)
+        chunk_zarr(zarr_store, (64, 64), 512)

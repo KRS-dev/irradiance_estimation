@@ -88,9 +88,9 @@ def prediction_error_plot(y, y_hat, output_var="SIS"):
     y = y.reshape(-1)
     y_hat = y_hat.reshape(-1)
     if isinstance(y, torch.Tensor):
-        y = y.numpy()
+        y = y.cpu().numpy()
     if isinstance(y_hat, torch.Tensor):
-        y_hat = y_hat.numpy()
+        y_hat = y_hat.cpu().numpy()
     # Start with a square Figure.
     fig = plt.figure(figsize=(8, 8))
     # Add a gridspec with two rows and two columns and a ratio of 1 to 4 between

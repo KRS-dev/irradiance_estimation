@@ -5,10 +5,10 @@ from torchmetrics.utilities import dim_zero_cat
 from torchmetrics.aggregation import MeanMetric
 import torch.nn as nn
 import torch.nn.functional as F
-import pytorch_lightning as L
+import lightning.pytorch as L
 import torch
 from torch.optim.lr_scheduler import CosineAnnealingLR
-from utils.plotting import plot_patches
+from utils.plotting import plot_patches, prediction_error_plot
 import wandb
 
 class MyRelativeMeanSquaredError(Metric):
@@ -52,7 +52,7 @@ class LitEstimator(L.LightningModule):
         super().__init__()
         self.lr = learning_rate
         self.model = model
-        self.metric = mse_loss_with_nans
+        self.metric = RelativeSquaredError()
         self.dm = dm
         self.save_hyperparameters(ignore=["dm"])
 
@@ -88,6 +88,7 @@ class LitEstimator(L.LightningModule):
             }
         )
         _, y_hat, y = self._shared_eval_step(self.val_batch_worst, self.val_idx_worst)
+       
         error = torch.mean(torch.sqrt((y_hat - y) ** 2), dim=[1, 2])
         _, ind = torch.topk(error, k=4)
         fig = plot_patches(y[ind].cpu(), y_hat[ind].cpu(), n_patches=4)
@@ -125,14 +126,14 @@ class LitEstimator(L.LightningModule):
 class LitEstimatorPoint(L.LightningModule):
     def __init__(self, learning_rate, model, dm):
         super().__init__()
+        self.save_hyperparameters(ignore=["dm","y","y_hat"])
         self.lr = learning_rate
         self.model = model
-        self.metric = MyRelativeMeanSquaredError()
-        self.other_metrics = MetricCollection([MeanSquaredError(), MeanAbsoluteError(), R2Score()])
+        self.metric = MeanSquaredError()
+        self.other_metrics = MetricCollection([RelativeSquaredError(), MeanAbsoluteError(), R2Score()])
         self.dm = dm
         self.y = []
         self.y_hat =[]
-        self.save_hyperparameters(ignore=["dm","y","y_hat"])
 
     def training_step(self, batch, batch_idx):
         loss, y_hat, y = self._shared_eval_step(batch, batch_idx)
@@ -150,12 +151,26 @@ class LitEstimatorPoint(L.LightningModule):
         loss, y_hat, y = self._shared_eval_step(batch, batch_idx)
         self.log("test_loss", loss, on_epoch=True, logger=True)
         return loss
+    
+    def predict_step(self, batch, batch_idx, ):
+        X, x, y = batch
+        return self.forward(X.float(), x.float())
 
     def on_validation_epoch_end(self):
-        y = torch.stack(self.y).reshape(-1)
-        y_hat = torch.stack(self.y_hat).reshape(-1)
-        losses = self.other_metrics(y_hat, y)
-        self.log_dict(losses, logger=True)
+
+        y = torch.vstack(self.y)
+        y_hat = torch.vstack(self.y_hat)
+
+        if self.dm.target_transform:
+            y_hat = self.dm.target_transform.inverse(y_hat, self.dm.y_vars)
+            y = self.dm.target_transform.inverse(y, self.dm.y_vars)
+
+        losses = self.other_metrics(y_hat.reshape(-1), y.reshape(-1))
+        self.log_dict(losses, logger=True, sync_dist=True)
+
+
+        fig = prediction_error_plot(y.cpu(), y_hat.cpu())
+        self.logger.log_image(key="Prediction error", images=[fig])
     
     def on_validation_epoch_start(self):
         self.y = []
@@ -166,8 +181,6 @@ class LitEstimatorPoint(L.LightningModule):
     
     def _shared_eval_step(self, batch, batch_idx):
         X, x, y = batch
-        # import pdb
-        # pdb.set_trace()
         y_hat = self.forward(X.float(), x.float())
         y_flat = y.reshape(-1)
         y_hat_flat = y_hat.view(-1)

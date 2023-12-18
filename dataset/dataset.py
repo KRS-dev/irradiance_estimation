@@ -1,5 +1,6 @@
 import itertools
-from typing import Any, Tuple
+from typing import Any, Dict, Hashable, Tuple
+from lightning.pytorch.utilities.types import EVAL_DATALOADERS
 
 from tqdm import tqdm
 import torch
@@ -10,11 +11,10 @@ import xarray
 from datetime import timedelta
 from xbatcher import BatchGenerator
 from preprocess.etc import benchmark
-import pytorch_lightning as L
+import lightning.pytorch as L
 import numpy as np
 import pandas as pd
-import pvlib, ephem
-
+from preprocess.sza import solarzenithangle
 
 import xbatcher
 import torch
@@ -22,99 +22,13 @@ from torch.utils.data import DataLoader
 import matplotlib.pyplot as plt
 
 
-def pyephem(
-    datetimes,
-    latitude,
-    longitude,
-    altitude=0,
-    pressure=101325,
-    temperature=12,
-    horizon="+0:00",
-    rad=True,
-):
-    """
-    Calculate the solar position using the PyEphem package.
-
-    Parameters
-    ----------
-    time : pandas.DatetimeIndex
-        Must be localized or UTC will be assumed.
-    latitude : float
-        Latitude in decimal degrees. Positive north of equator, negative
-        to south.
-    longitude : float
-        Longitude in decimal degrees. Positive east of prime meridian,
-        negative to west.
-    altitude : float, default 0
-        Height above sea level in meters. [m]
-    pressure : int or float, optional, default 101325
-        air pressure in Pascals.
-    temperature : int or float, optional, default 12
-        air temperature in degrees C.
-    horizon : string, optional, default '+0:00'
-        arc degrees:arc minutes from geometrical horizon for sunrise and
-        sunset, e.g., horizon='+0:00' to use sun center crossing the
-        geometrical horizon to define sunrise and sunset,
-        horizon='-0:34' for when the sun's upper edge crosses the
-        geometrical horizon
-
-    See also
-    --------
-    spa_python, spa_c, ephemeris
-    """
-
-    # Written by Will Holmgren (@wholmgren), University of Arizona, 2014
-    # try:
-    #     import ephem
-    # except ImportError:
-    #     raise ImportError('PyEphem must be installed')
-
-    # if localized, convert to UTC. otherwise, assume UTC.
-    # try:
-    #     time_utc = time.tz_convert('UTC')
-    # except TypeError:
-    #     time_utc = time
-
-    # sun_coords = pd.DataFrame(index=time)
-
-    obs = ephem.Observer()
-    obs.lat = str(latitude)
-    obs.lon = str(longitude)
-    obs.elevation = altitude if not np.isnan(altitude) else 0
-    sun = ephem.Sun()
-
-    # make and fill lists of the sun's altitude and azimuth
-    # this is the pressure and temperature corrected apparent alt/az.
-    elevs = []
-    azis = []
-    for thetime in datetimes:
-        obs.date = ephem.Date(thetime)
-        sun.compute(obs)
-        elevs.append(sun.alt)
-        azis.append(sun.az)
-
-    elevs = np.array(elevs)
-    azis = np.array(azis)
-    zens = np.pi / 2 - elevs
-
-    if not rad:
-        elevs = np.rad2deg(elevs)
-        azis = np.rad2deg(azis)
-        zens = np.rad2deg(zens)
-
-    return elevs, azis, zens
-
-
-def solarzenithangle(datetime, lat, lon, alt):
-    """Expects datetime in UTC"""
-    elevs, azis, zens = pyephem(datetime, lat, lon, alt)
-    return zens  # Zenith angle
 
 
 class MSGDataset(Dataset):
     def __init__(
         self, dataset, y_vars, x_vars=None, transform=None, target_transform=None
     ):
+        super().__init__()
         if isinstance(dataset, str):
             self.ds = xarray.open_zarr(dataset)
         elif isinstance(dataset, xarray.Dataset):
@@ -122,7 +36,6 @@ class MSGDataset(Dataset):
         else:
             raise ValueError(f"{dataset} is not a zarr store or a xarray.Dataset.")
 
-        self.ds = self.ds.drop_vars(("lat_bnds", "lon_bnds"))
         self.attributes = self.ds.attrs
 
         self.transform = transform
@@ -172,6 +85,7 @@ class MSGDatasetBatched(MSGDataset):
         x_vars=None,
         patch_size=(64, 64),
         batch_size=10,
+        input_overlap={},
         transform=None,
         target_transform=None,
     ):
@@ -185,10 +99,12 @@ class MSGDatasetBatched(MSGDataset):
 
         self.patch_size = patch_size
         self.batch_size = batch_size
+        self.input_overlap = input_overlap
         self.generator = BatchGenerator(
             self.ds,
             input_dims={"lat": self.patch_size[1], "lon": self.patch_size[0]},
             batch_dims={"time": self.batch_size},
+            input_overlap=self.input_overlap,
         )
 
     def __len__(self) -> int:
@@ -402,6 +318,7 @@ class MSGDataModule(L.LightningDataModule):
         self,
         batch_size: int = 32,
         patch_size: (int, int) = None,
+        input_overlap: Dict[Hashable, int] = {},
         num_workers: int = 12,
         x_vars=None,
         y_vars=['SIS'],
@@ -411,6 +328,7 @@ class MSGDataModule(L.LightningDataModule):
         super().__init__()
         self.batch_size = batch_size
         self.patch_size = patch_size
+        self.input_overlap = input_overlap
         self.num_workers = num_workers
         self.x_vars = x_vars
         self.y_vars = y_vars
@@ -427,6 +345,7 @@ class MSGDataModule(L.LightningDataModule):
                     x_vars=self.x_vars,
                     patch_size=self.patch_size,
                     batch_size=self.batch_size,
+                    input_overlap=self.input_overlap,
                     transform=self.tranform,
                     target_transform=self.target_transform
                 )
@@ -436,6 +355,7 @@ class MSGDataModule(L.LightningDataModule):
                     x_vars=self.x_vars,
                     patch_size=self.patch_size,
                     batch_size=self.batch_size,
+                    input_overlap=self.input_overlap,
                     transform=self.tranform,
                     target_transform=self.target_transform
                 )
@@ -465,6 +385,7 @@ class MSGDataModule(L.LightningDataModule):
                     x_vars=self.x_vars,
                     patch_size=self.patch_size,
                     batch_size=self.batch_size,
+                    input_overlap=self.input_overlap,
                     transform=self.tranform,
                     target_transform=self.target_transform
                 )
@@ -495,14 +416,17 @@ class MSGDataModule(L.LightningDataModule):
             self.test_dataset, batch_size=None, num_workers=self.num_workers
         )
 
+    def predict_dataloader(self):
+        return self.val_dataloader()
+
 
 class MSGDataModulePoint(MSGDataModule):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
 
-        assert (
-            self.patch_size is not None
-        ), "To create a patch to point datamodule a patchsize is required"
+        # assert (
+        #     self.patch_size is not None
+        # ), "To create a patch to point datamodule a patchsize is required"
 
     def setup(self, stage: str):
         if stage == "fit":
@@ -513,6 +437,7 @@ class MSGDataModulePoint(MSGDataModule):
                 x_vars=self.x_vars,
                 batch_size=self.batch_size,
                 patch_size=self.patch_size,
+                input_overlap=self.input_overlap,
                 transform=self.transform,
                 target_transform=self.target_transform
             )
@@ -522,6 +447,7 @@ class MSGDataModulePoint(MSGDataModule):
                 x_vars=self.x_vars,
                 batch_size=self.batch_size,
                 patch_size=self.patch_size,
+                input_overlap=self.input_overlap,
                 transform=self.transform,
                 target_transform=self.target_transform
             )
@@ -532,6 +458,7 @@ class MSGDataModulePoint(MSGDataModule):
                 x_vars=self.x_vars,
                 batch_size=self.batch_size,
                 patch_size=self.patch_size,
+                input_overlap=self.input_overlap,
                 transform=self.transform,
                 target_transform=self.target_transform
             )

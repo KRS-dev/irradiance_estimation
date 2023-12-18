@@ -35,11 +35,12 @@ class ResBlock(nn.Module):
 
 
 class ConvResNet(nn.Module):
-    def __init__(self, num_attr: int):
+    def __init__(self, num_attr: int = 5, input_channels=1):
         super(ConvResNet, self).__init__()
 
-        self.conv1 = nn.Sequential(
-            nn.Conv2d(1, 64, 3, padding="same"), nn.BatchNorm2d(64), nn.ReLU()
+        self.input_channels = input_channels
+        self.conv1 = nn.Sequential( 
+            nn.Conv2d(self.input_channels, 64, 3, padding="same"), nn.BatchNorm2d(64), nn.ReLU()
         )
         self.conv2 = nn.Sequential(
             nn.Conv2d(64, 64, 3, padding="same"), nn.BatchNorm2d(64), nn.ReLU()
