@@ -154,7 +154,8 @@ class LitEstimatorPoint(L.LightningModule):
     
     def predict_step(self, batch, batch_idx, ):
         X, x, y = batch
-        return self.forward(X.float(), x.float())
+        y_hat = self.forward(X.float(), x.float())
+        return y_hat, x
 
     def on_validation_epoch_end(self):
 

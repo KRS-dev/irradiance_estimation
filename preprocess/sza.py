@@ -2,7 +2,7 @@ import pandas as pd
 import xarray
 import ephem
 import numpy as np
-
+from tqdm import tqdm
 
 def pyephem(
     datetimes,
@@ -90,10 +90,43 @@ def pyephem(
 def solarzenithangle(datetime, lat, lon, alt):
     """Expects datetime in UTC"""
     elevs, azis, zens = pyephem(datetime, lat, lon, alt)
-    return zens  # Zenith angle
+    return zens, azis  # Zenith angle
 
 
-
+def solarzenithangle_latlon(da_temp):
+    
+    
+    # a = [x for x in range(0, len(da_temp.time), 1)]
+    # a.append(len(da_temp.time)-1)
+    datetimes = pd.to_datetime(da_temp.time)
+    
+    lats = np.arange(da_temp.lat.min(), da_temp.lat.max()+1, 1, dtype=np.float32)
+    lons = np.arange(da_temp.lon.min(), da_temp.lon.max()+1, 1, dtype=np.float32)
+    
+    da_sza = xarray.DataArray(coords={'time':datetimes, 'lat':lats, 'lon':lons,},
+                          data=np.zeros(shape=(len(datetimes), len(lats), len(lons)),
+                                       dtype=np.float16))
+    da_sza.name = 'SZA'
+    da_sza.attrs.update({'long_name': 'Solar Zenith Angle at sea level',
+                      'standard_name': 'solar_zenith_angle',
+                      'units':'rad'})
+    da_azi = xarray.DataArray(coords={'time':datetimes, 'lat':lats, 'lon':lons,},
+                          data=np.zeros(shape=(len(datetimes), len(lats), len(lons)), 
+                                        dtype=np.float16))
+    da_azi.name = 'AZI'
+    da_azi.attrs.update({'long_name': 'Solar Azimuth Angle at sea level',
+                      'standard_name': 'solar_azimuth_angle',
+                      'units':'rad'})
+    
+    for i, lat in tqdm(enumerate(lats)):
+        for j, lon in enumerate(lons):
+            sza, azi = solarzenithangle(datetimes, lat, lon, 0)
+            da_sza[:,i, j] = sza
+            da_azi[:,i,j] = azi
+    
+    
+    ds = xarray.Dataset({'SZA':da_sza, 'AZI':da_azi})
+    return ds
 
 
 if __name__ == '__main__':
@@ -104,27 +137,27 @@ if __name__ == '__main__':
     lat = hres.lat 
     lon = hres.lon
 
-    lat_sza = np.linspace(np.floor(lat.min()), np.ceil(lat.max()), 0.5)
-    lon_sza = np.linspace(np.floor(lon.min()), np.ceil(lon.max()), 0.5)
+    # lat_sza = np.linspace(np.floor(lat.min()), np.ceil(lat.max()), 1)
+    # lon_sza = np.linspace(np.floor(lon.min()), np.ceil(lon.max()), 1)
 
-    lonlon, latlat= np.meshgrid(lon_sza, lat_sza)
+    # times = hres.time.values
 
-    times = hres.time.values
+    # datetimes = pd.to_datetime(hres.time)
 
-    datetimes = pd.to_datetime(hres.time)
+    # array = xarray.apply_ufunc(
+    #     solarzenithangle,
+    #     datetimes,
+    #     hres.lat,
+    #     hres.lon,
+    #     hres.SRTM,
+    #     input_core_dims=[['time'], [], [], []],
+    #     output_core_dims=[['time', 'solar_position']],
+    #     vectorize=True,
+    #     dask="parallelized",
+    #     dask_gufunc_kwargs={'output_sizes': {'time':len(hres.time), 'solar_position':1}},
+    #     output_dtypes=[np.float32],
+    #     )
 
-    array = xarray.apply_ufunc(
-        solarzenithangle,
-        datetimes,
-        hres.lat,
-        hres.lon,
-        hres.SRTM,
-        input_core_dims=[['time'], [], [], []],
-        output_core_dims=[['time', 'solar_position']],
-        vectorize=True,
-        dask="parallelized",
-        dask_gufunc_kwargs={'output_sizes': {'time':len(hres.time), 'solar_position':1}},
-        output_dtypes=[np.float32],
-        )
+    # ds_sun = solarzenithangle_latlon(hres.SIS)
 
-    print(array)
+

@@ -1,5 +1,5 @@
 import itertools
-from typing import Any, Dict, Hashable, Tuple
+from typing import Any, Callable, Dict, Hashable, Tuple
 from lightning.pytorch.utilities.types import EVAL_DATALOADERS
 
 from tqdm import tqdm
@@ -26,30 +26,35 @@ import matplotlib.pyplot as plt
 
 class MSGDataset(Dataset):
     def __init__(
-        self, dataset, y_vars, x_vars=None, transform=None, target_transform=None
+        self, zarr_store, y_vars, x_vars=None, transform:Callable=None, target_transform:Callable=None, filter:Callable[[xarray.Dataset],xarray.Dataset]=None
     ):
         super().__init__()
-        if isinstance(dataset, str):
-            self.ds = xarray.open_zarr(dataset)
-        elif isinstance(dataset, xarray.Dataset):
-            self.ds = dataset
+        if isinstance(zarr_store, str):
+            self.ds = xarray.open_zarr(zarr_store)
+        elif isinstance(zarr_store, xarray.Dataset):
+            self.ds = zarr_store
         else:
-            raise ValueError(f"{dataset} is not a zarr store or a xarray.Dataset.")
+            raise ValueError(f"{zarr_store} is not a zarr store or a xarray.Dataset.")
 
         self.attributes = self.ds.attrs
 
         self.transform = transform
         self.target_transform = target_transform
+        self.filter = filter
 
-        vars = set(self.ds.keys())
-        assert set(y_vars).issubset(vars), f"y_vars: {set(y_vars) - vars} not available in the dataset"
         self.y_vars = y_vars
+        self.x_vars = x_vars
+
+        self.check_vars()
+
+        
+    def check_vars(self):
+        vars = set(self.ds.keys())
+        assert set(self.y_vars).issubset(vars), f"y_vars: {set(self.y_vars) - vars} not available in the dataset"
         ignore_vars = set(["lon_bnds", "lat_bnds", "record_status", "crs"])
         other_vars = (vars - ignore_vars - set(self.y_vars))
-
-        if x_vars is not None:
-            assert set(x_vars).issubset(vars), f"{set(x_vars) - vars} not in the dataset"
-            self.x_vars = x_vars
+        if self.x_vars is not None:
+            assert set(self.x_vars).issubset(vars), f"{set(self.x_vars) - vars} not in the dataset"
         else:
             self.x_vars = other_vars
 
@@ -69,42 +74,42 @@ class MSGDataset(Dataset):
         return X, y
 
     def get_dataset(self, idx):
-        X = self.ds[self.x_vars].isel(time=idx)  # select time slice, reshape to t lon lat
-        y = self.ds[self.y_vars].isel(time=idx)
+        
+        ds = self.ds
+        if self.filter:
+            ds = self.apply_filter(ds)
+
+        X = ds[self.x_vars].isel(time=idx)  # select time slice, reshape to t lon lat
+        y = ds[self.y_vars].isel(time=idx)
         if self.transform:
             X = self.transform(X)
         if self.target_transform:
             y = self.target_transform(y)
         return X, y
+    
+    def apply_filter(self, ds):
+        return self.filter(ds)
 
 class MSGDatasetBatched(MSGDataset):
     def __init__(
         self,
-        zarr_store,
-        y_vars=None,
-        x_vars=None,
         patch_size=(64, 64),
-        batch_size=10,
         input_overlap={},
-        transform=None,
-        target_transform=None,
+        batch_dims={'time':10},
+        **kwargs,
     ):
-        super().__init__(
-            zarr_store,
-            y_vars,
-            x_vars,
-            transform=transform,
-            target_transform=target_transform,
-        )
+        super().__init__(**kwargs)
 
         self.patch_size = patch_size
-        self.batch_size = batch_size
+        self.input_dims = {'lat':self.patch_size[1], 'lon':self.patch_size[0]}
+        self.batch_dims = batch_dims
         self.input_overlap = input_overlap
         self.generator = BatchGenerator(
             self.ds,
-            input_dims={"lat": self.patch_size[1], "lon": self.patch_size[0]},
-            batch_dims={"time": self.batch_size},
+            input_dims=self.input_dims,
+            batch_dims=self.batch_dims,
             input_overlap=self.input_overlap,
+            # concat_input_dims=True,
         )
 
     def __len__(self) -> int:
@@ -163,9 +168,11 @@ class MSGDatasetBatched(MSGDataset):
                     f"{type(self).__name__}.__getitem__ currently requires a single integer key"
                 )
 
-        a = self.generator[idx]
-        X_batch = a[self.x_vars]
-        y_batch = a[self.y_vars] # with a single y_vars it becomes a dataarray automatically
+        ds = self.generator[idx]
+        if self.filter:
+            ds = self.apply_filter(ds)
+        X_batch = ds[self.x_vars]
+        y_batch = ds[self.y_vars] # with a single y_vars it becomes a dataarray automatically
 
         if self.transform:
             X_batch = self.transform(X_batch)
@@ -176,8 +183,9 @@ class MSGDatasetBatched(MSGDataset):
 
 
 class MSGDatasetPoint(MSGDatasetBatched):
-    def __init__(self, *args, **kwargs):
+    def __init__(self, x_features = 'all', *args, **kwargs):
         super().__init__(*args, **kwargs)
+        self.x_features = x_features
 
     def __getitem__(self, idx) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """returns a batch in torch tensors form"""
@@ -199,12 +207,12 @@ class MSGDatasetPoint(MSGDatasetBatched):
         # y = y.fillna(-99)
 
         X_batch = torch.tensor(X_batch.values)  # , names=('C', 'B', 'X', 'Y'))
-        x_attributes = torch.tensor(x_attributes.values)  # ('B', 'C')
-        y = torch.tensor(y.values)  # , names=('B')
+        x_attributes = torch.tensor(x_attributes.values)  # ('C', 'B')
+        y = torch.tensor(y.values)  #  ('C','B')
 
         X_batch = X_batch.permute(1, 0, 2, 3)  # ('B', 'C', 'X', 'Y')
-        x_attributes = x_attributes.permute(1, 0)
-        y = y.permute(1,0)
+        x_attributes = x_attributes.permute(1, 0) # ('B', 'C')
+        y = y.permute(1,0) # ('B', 'C')
 
         return X_batch, x_attributes, y
 
@@ -238,13 +246,17 @@ class MSGDatasetPoint(MSGDatasetBatched):
                     f"{type(self).__name__}.get_dataset_batch currently requires a single integer key"
                 )
 
-        a = self.generator[idx]
-        X_batch = a[self.x_vars]
-        y_batch = a[self.y_vars] 
+        ds = self.generator[idx]
+        if self.filter:
+            ds = self.apply_filter(ds)
+        X_batch = ds[self.x_vars]
+        y_batch = ds[self.y_vars] 
         x_attributes = self.get_point_features(X_batch)
+        if self.x_features != 'all':
+            x_attributes = x_attributes[self.x_features]
 
-        if self.patch_size[0] % 2 == 0:
-            idx = (int(self.patch_size[0] / 2 - 1), int(self.patch_size[0] / 2))
+        if self.input_dims['lat'] % 2 == 0:
+            idx = (int(self.input_dims['lat'] / 2 - 1), int(self.input_dims['lat'] / 2))
             y_batch_point = (
                 y_batch.isel(
                     lat=slice(idx[0], idx[1] + 1), lon=slice(idx[0], idx[1] + 1)
@@ -252,7 +264,7 @@ class MSGDatasetPoint(MSGDatasetBatched):
                 .mean(dim=("lat", "lon"))
             )
         else:
-            idx = int(self.patch_size[0] / 2)
+            idx = int(self.input_dims['lat'] / 2)
             y_batch_point = y_batch.isel(lat=idx, lon=idx)
 
         if self.transform:
@@ -267,8 +279,8 @@ class MSGDatasetPoint(MSGDatasetBatched):
     def get_point_features(self, X_batch_ds):
 
         #interpolate between middle 4 pixels if patchsize has even sides
-        if self.patch_size[0] % 2 == 0: 
-            idx = (int(self.patch_size[0] / 2 - 1), int(self.patch_size[0] / 2))
+        if self.input_dims['lat'] % 2 == 0: 
+            idx = (int(self.input_dims['lat'] / 2 - 1), int(self.input_dims['lat'] / 2))
             features = X_batch_ds.isel(
                 lat=slice(idx[0], idx[1] + 1), lon=slice(idx[0], idx[1] + 1)
             )
@@ -276,7 +288,7 @@ class MSGDatasetPoint(MSGDatasetBatched):
             lon = features.lon.mean().item()
             features = features.mean(dim=("lat", "lon"), keepdims=True)
         else:
-            idx = int(self.patch_size[0] / 2)
+            idx = int(self.input_dims['lat'] / 2)
             features = X_batch_ds.isel(lat=idx, lon=idx)
             lat = features.lat.item()
             lon = features.lon.item()
@@ -288,14 +300,15 @@ class MSGDatasetPoint(MSGDatasetBatched):
             srtm = self.ds.SRTM.sel(lat=lat, lon=lon, method="nearest").values.item()
 
         datetimes = pd.to_datetime(features.time)
+        batch_size = len(datetimes) # batchsize could have changed when applying the filter
         dayofyear = features.time.dt.dayofyear.values
-        sza = solarzenithangle(
+        sza, azi = solarzenithangle(
             datetimes, lat, lon, srtm if not np.isnan(srtm) else 0
         )  # Assume altitude is zero at nans for sza calc
 
-        lat = np.repeat(lat, self.batch_size)
-        lon = np.repeat(lon, self.batch_size)
-        srtm = np.repeat(srtm, self.batch_size)
+        lat = np.repeat(lat, batch_size)
+        lon = np.repeat(lon, batch_size)
+        srtm = np.repeat(srtm, batch_size)
 
         features = xarray.Dataset(
             data_vars={
@@ -304,6 +317,7 @@ class MSGDatasetPoint(MSGDatasetBatched):
                 "lon": (('time'), lon),
                 "SRTM": (('time'), srtm),
                 "SZA": (('time'), sza),
+                "AZI": (('time'), azi),
             },
             coords={
                 'sample': (('time'), features.time.data)
@@ -317,86 +331,48 @@ class MSGDataModule(L.LightningDataModule):
     def __init__(
         self,
         batch_size: int = 32,
-        patch_size: (int, int) = None,
-        input_overlap: Dict[Hashable, int] = {},
         num_workers: int = 12,
         x_vars=None,
         y_vars=['SIS'],
         transform=None,
-        target_transform=None
+        target_transform=None,
+        filter=None,
     ):
         super().__init__()
         self.batch_size = batch_size
-        self.patch_size = patch_size
-        self.input_overlap = input_overlap
         self.num_workers = num_workers
         self.x_vars = x_vars
         self.y_vars = y_vars
         self.transform = transform
         self.target_transform = target_transform
+        self.filter=filter
 
     def setup(self, stage: str):
         if stage == "fit":
-            if self.patch_size is not None:
-                # Using xbatcher to make batches of patched data
-                self.train_dataset = MSGDatasetBatched(
-                    "/scratch/snx3000/kschuurm/DATA/train.zarr",
-                    y_vars=["SIS"],
-                    x_vars=self.x_vars,
-                    patch_size=self.patch_size,
-                    batch_size=self.batch_size,
-                    input_overlap=self.input_overlap,
-                    transform=self.tranform,
-                    target_transform=self.target_transform
-                )
-                self.val_dataset = MSGDatasetBatched(
-                    "/scratch/snx3000/kschuurm/DATA/valid.zarr",
-                    y_vars=["SIS"],
-                    x_vars=self.x_vars,
-                    patch_size=self.patch_size,
-                    batch_size=self.batch_size,
-                    input_overlap=self.input_overlap,
-                    transform=self.tranform,
-                    target_transform=self.target_transform
-                )
-            else:
-                self.train_dataset = MSGDataset(
-                    "/scratch/snx3000/kschuurm/DATA/train.zarr", 
-                    y_vars=["SIS"],
-                    x_vars=self.x_vars,
-                    batch_size=self.batch_size,
-                    transform=self.tranform,
-                    target_transform=self.target_transform
-                )
-                self.val_dataset = MSGDataset(
-                    "/scratch/snx3000/kschuurm/DATA/validation.zarr", 
-                    y_vars=["SIS"],
-                    x_vars=self.x_vars,
-                    batch_size=self.batch_size,
-                    transform=self.tranform,
-                    target_transform=self.target_transform
-                )
+            self.train_dataset = MSGDataset(
+                zarr_store="/scratch/snx3000/kschuurm/DATA/train.zarr", 
+                y_vars=["SIS"],
+                x_vars=self.x_vars,
+                transform=self.tranform,
+                target_transform=self.target_transform,
+                filter=self.filter,
+            )
+            self.val_dataset = MSGDataset(
+                zarr_store="/scratch/snx3000/kschuurm/DATA/valid.zarr", 
+                y_vars=["SIS"],
+                x_vars=self.x_vars,
+                transform=self.tranform,
+                target_transform=self.target_transform
+            )
 
         if stage == "test":
-            if self.patch_size is not None:
-                self.test_dataset = MSGDatasetBatched(
-                    "/scratch/snx3000/kschuurm/DATA/validation.zarr",
-                    y_vars=["SIS"],
-                    x_vars=self.x_vars,
-                    patch_size=self.patch_size,
-                    batch_size=self.batch_size,
-                    input_overlap=self.input_overlap,
-                    transform=self.tranform,
-                    target_transform=self.target_transform
-                )
-            else:
-                self.test_dataset = MSGDataset(
-                    "/scratch/snx3000/kschuurm/DATA/test.zarr", 
-                    y_vars=["SIS"],
-                    x_vars=self.x_vars,
-                    transform=self.tranform,
-                    target_transform=self.target_transform
-                )
+            self.test_dataset = MSGDataset(
+                zarr_store="/scratch/snx3000/kschuurm/DATA/test.zarr", 
+                y_vars=["SIS"],
+                x_vars=self.x_vars,
+                transform=self.tranform,
+                target_transform=self.target_transform
+            )
 
     def prepare_data(self):
         pass
@@ -419,33 +395,32 @@ class MSGDataModule(L.LightningDataModule):
     def predict_dataloader(self):
         return self.val_dataloader()
 
-
-class MSGDataModulePoint(MSGDataModule):
-    def __init__(self, *args, **kwargs):
+class MSGDataModuleBatched(MSGDataModule):
+    def __init__(self, patch_size: (int, int), input_overlap: Dict[Hashable, int] = {}, *args, **kwargs):
         super().__init__(*args, **kwargs)
-
-        # assert (
-        #     self.patch_size is not None
-        # ), "To create a patch to point datamodule a patchsize is required"
+        self.patch_size= patch_size
+        self.batch_dims = {'time':self.batch_size}
+        self.input_overlap = input_overlap
 
     def setup(self, stage: str):
         if stage == "fit":
             # Using xbatcher to make batches of patched data
-            self.train_dataset = MSGDatasetPoint(
-                "/scratch/snx3000/kschuurm/DATA/train.zarr",
+            self.train_dataset = MSGDatasetBatched(
+                zarr_store="/scratch/snx3000/kschuurm/DATA/train.zarr",
                 y_vars=self.y_vars,
                 x_vars=self.x_vars,
-                batch_size=self.batch_size,
+                batch_dims=self.batch_dims,
                 patch_size=self.patch_size,
                 input_overlap=self.input_overlap,
                 transform=self.transform,
-                target_transform=self.target_transform
+                target_transform=self.target_transform,
+                filter=self.filter,
             )
-            self.val_dataset = MSGDatasetPoint(
-                "/scratch/snx3000/kschuurm/DATA/valid.zarr",
+            self.val_dataset = MSGDatasetBatched(
+                zarr_store="/scratch/snx3000/kschuurm/DATA/valid.zarr",
                 y_vars=self.y_vars,
                 x_vars=self.x_vars,
-                batch_size=self.batch_size,
+                batch_dims=self.batch_dims,
                 patch_size=self.patch_size,
                 input_overlap=self.input_overlap,
                 transform=self.transform,
@@ -453,10 +428,55 @@ class MSGDataModulePoint(MSGDataModule):
             )
         if stage == "test":
             self.test_dataset = MSGDatasetBatched(
-                "/scratch/snx3000/kschuurm/DATA/validation.zarr",
+                zarr_store="/scratch/snx3000/kschuurm/DATA/test.zarr",
                 y_vars=self.y_vars,
                 x_vars=self.x_vars,
-                batch_size=self.batch_size,
+                batch_dims=self.batch_dims,
+                patch_size=self.patch_size,
+                input_overlap=self.input_overlap,
+                transform=self.transform,
+                target_transform=self.target_transform
+            )
+
+
+class MSGDataModulePoint(MSGDataModuleBatched):
+    def __init__(self, x_features=None, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.x_features = x_features
+
+    def setup(self, stage: str):
+        if stage == "fit":
+            # Using xbatcher to make batches of patched data
+            self.train_dataset = MSGDatasetPoint(
+                zarr_store="/scratch/snx3000/kschuurm/DATA/train.zarr",
+                y_vars=self.y_vars,
+                x_vars=self.x_vars,
+                x_features=self.x_features,
+                batch_dims=self.batch_dims,
+                patch_size=self.patch_size,
+                input_overlap=self.input_overlap,
+                transform=self.transform,
+                target_transform=self.target_transform,
+                filter=self.filter,
+            )
+            self.val_dataset = MSGDatasetPoint(
+                zarr_store="/scratch/snx3000/kschuurm/DATA/valid.zarr",
+                y_vars=self.y_vars,
+                x_vars=self.x_vars,
+                x_features=self.x_features,
+                batch_dims=self.batch_dims,
+                patch_size=self.patch_size,
+                input_overlap=self.input_overlap,
+                transform=self.transform,
+                target_transform=self.target_transform
+            )
+        if stage == "test":
+            self.test_dataset = MSGDatasetPoint(
+                zarr_store="/scratch/snx3000/kschuurm/DATA/test.zarr",
+                y_vars=self.y_vars,
+                x_vars=self.x_vars,
+                x_features=self.x_features,
+                batch_dims=self.batch_dims,
                 patch_size=self.patch_size,
                 input_overlap=self.input_overlap,
                 transform=self.transform,
@@ -481,28 +501,32 @@ if __name__ == "__main__":
     # plt.colorbar()
     # plt.savefig('testbatchs.png')
     from normalization import MinMax
-
-
+    
+    def SZA_filter(ds):
+        return ds.isel(time=ds.SZA.mean(['lat','lon']) < 1.4835298641951802) # SZA below 85*
+                     
     minmax_normalizer = MinMax()
     ds = MSGDataset(
         "/scratch/snx3000/kschuurm/DATA/valid.zarr",
         y_vars=["SIS", "SRTM"],
         x_vars=["channel_1", "channel_2"],
         transform=minmax_normalizer,
-        target_transform=minmax_normalizer
+        target_transform=minmax_normalizer,
     )
 
     ds1 = MSGDatasetBatched(
-        "/scratch/snx3000/kschuurm/DATA/valid.zarr",
+        zarr_store="/scratch/snx3000/kschuurm/DATA/valid.zarr",
         y_vars=["SIS"],
         x_vars=["channel_1", "channel_2"],
         patch_size=(15, 15),
+        batch_size=1024,
         transform=minmax_normalizer,
-        target_transform=minmax_normalizer
+        target_transform=minmax_normalizer,
+        filter = SZA_filter
     )
 
     ds2 = MSGDatasetPoint(
-        "/scratch/snx3000/kschuurm/DATA/valid.zarr",
+        zarr_store="/scratch/snx3000/kschuurm/DATA/valid.zarr",
         y_vars=["SIS", "SRTM"],
         x_vars=["channel_1", "channel_10"],
         patch_size=(16, 16),
@@ -511,7 +535,7 @@ if __name__ == "__main__":
     )
 
     ds3 = MSGDatasetPoint(
-        "/scratch/snx3000/kschuurm/DATA/valid.zarr",
+        zarr_store="/scratch/snx3000/kschuurm/DATA/valid.zarr",
         y_vars=["SIS", "SRTM"],
         x_vars=["channel_1", "channel_10"],
         patch_size=(15, 15),

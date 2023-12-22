@@ -20,7 +20,8 @@ MINMAX = {
     "dayofyear": (1, 365),
     "lat": (-90, 90),
     "lon": (-180, 180),
-    "SZA": (0, np.pi/2)
+    "SZA": (0, np.pi/2),
+    "AZI": (0, 2*np.pi),
 }
 
 class MinMax:
@@ -70,8 +71,8 @@ class MinMax:
             minvars = MINMAX[vars[0]][0]
             maxvars = MINMAX[vars[0]][1]
         else:
-            minvars = np.array([MINMAX[x][0] for x in vars]).reshape(1,-1)
-            maxvars = np.array([MINMAX[x][1] for x in vars]).reshape(1,-1)
+            minvars = torch.tensor([MINMAX[x][0] for x in vars]).reshape(1,-1)
+            maxvars = torch.tensor([MINMAX[x][1] for x in vars]).reshape(1,-1)
         return (array - minvars)/(maxvars - minvars)
 
 
@@ -87,6 +88,6 @@ class MinMax:
             minvars = MINMAX[vars[0]][0]
             maxvars = MINMAX[vars[0]][1]
         else:
-            minvars = np.array([MINMAX[x][0] for x in vars]).reshape(1,-1)
-            maxvars = np.array([MINMAX[x][1] for x in vars]).reshape(1,-1)
+            minvars = torch.tensor([MINMAX[x][0] for x in vars]).reshape(1,-1)
+            maxvars = torch.tensor([MINMAX[x][1] for x in vars]).reshape(1,-1)
         return array * (maxvars - minvars) + minvars

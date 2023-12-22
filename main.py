@@ -2,6 +2,7 @@ import torch
 import wandb
 from dataset.dataset import MSGDataModule, MSGDataModulePoint
 from dataset.normalization import MinMax
+from dataset.filters import sza_filter_95
 from models.ConvResNet_Jiang import ConvResNet
 from models.FNO import FNO2d
 from models.LightningModule import LitEstimator, LitEstimatorPoint
@@ -21,20 +22,20 @@ LEARNING_RATE = 0.001
 BATCH_SIZE = 1024
 NUM_EPOCHS = 20
 MIN_EPOCHS = 1
-MAX_EPOCHS = 30
+MAX_EPOCHS = 5
 
-CHPT = './SIS_point_estimation/ddmsa5e9/checkpoints/epoch=29-step=19680.ckpt'
+CHPT = None #'./SIS_point_estimation/ddmsa5e9/checkpoints/epoch=29-step=19680.ckpt'
 
 # Dataset
 # DATA_DIR
 NUM_WORKERS = 12
-X_VARS = ["channel_1", "channel_7"]
+X_VARS = ["channel_1",]# "channel_2", "channel_3", "channel_4", "channel_5", "channel_6", "channel_7", "channel_8", "channel_9", "channel_10", "channel_11"]
 Y_VARS = ["SIS"]
 
 # Compute related
 ACCELERATOR = "gpu"
 DEVICES = -1
-NUM_NODES = 16
+NUM_NODES = 32
 STRATEGY = "ddp"
 PRECISION = 32
 
@@ -50,9 +51,10 @@ def main():
         y_vars=Y_VARS,
         transform=MinMax(),
         target_transform=MinMax(),
+        filter=sza_filter_95,
     )
 
-    model = ConvResNet(num_attr=5, input_channels=len(X_VARS))
+    model = ConvResNet(num_attr=6, input_channels=len(X_VARS))
 
     if CHPT is not None:
         estimator = LitEstimatorPoint.load_from_checkpoint(
@@ -79,6 +81,7 @@ def main():
             "Y_VARS":Y_VARS,
             "TRANSFORM": [str(dm.transform)],
             "CHPT_START": CHPT,
+            "FILTER":"SZA < 95*",
         })
 
     trainer = Trainer(
@@ -94,7 +97,8 @@ def main():
         max_epochs=MAX_EPOCHS,
         precision=PRECISION,
         log_every_n_steps=200,
-        # plugins=[SLURMEnvironment(auto_requeue=False)],
+        val_check_interval=.5,
+        plugins=[SLURMEnvironment(auto_requeue=False)],
     )
 
     trainer.fit(model=estimator, train_dataloaders=dm)
