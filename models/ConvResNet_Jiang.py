@@ -35,7 +35,7 @@ class ResBlock(nn.Module):
 
 
 class ConvResNet(nn.Module):
-    def __init__(self, num_attr: int = 5, input_channels=1):
+    def __init__(self, num_attr: int = 5, input_channels=1, output_channels=1):
         super(ConvResNet, self).__init__()
 
         self.input_channels = input_channels
@@ -66,7 +66,7 @@ class ConvResNet(nn.Module):
             nn.ReLU(),
             nn.Linear(256, 64),
             nn.ReLU(),
-            nn.Linear(64, 1),
+            nn.Linear(64, output_channels),
         )
 
     def forward(self, x, x_attrs):

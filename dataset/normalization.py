@@ -5,7 +5,10 @@ import torch
 
 MINMAX = {
     "SIS": (0.0, 1109.0),
+    "CAL": (0.0, 1.0),
+    "SID": (0.0, 600),
     "SRTM": (-7.6700854700854695, 3746.053675213676),
+    "DEM": (-7.6700854700854695, 3746.053675213676),
     "channel_1": (-0.09116022288799286, 18.401456832885742),
     "channel_10": (13.867655754089355, 177.00460815429688),
     "channel_11": (20.31503677368164, 117.05536651611328),
@@ -64,15 +67,21 @@ class MinMax:
         MinMax normalization
         Assumes vars are on the second dimension (Channels) in order of the vars given.
         '''
+        
+        
+        shape = [1]*len(array.shape)
+        
         if len(vars) > 1:  # Check for zero dimensional arrays
             assert array.shape[1] == len(vars), f"{len(vars)} vars are not equal to {array.shape[1]} the number of channels in dim=1."
-        
+            shape[1] = array.shape[1] # (1, C, 1, ... 1)
+            
         if len(vars) == 1:
             minvars = MINMAX[vars[0]][0]
             maxvars = MINMAX[vars[0]][1]
         else:
-            minvars = torch.tensor([MINMAX[x][0] for x in vars]).reshape(1,-1)
-            maxvars = torch.tensor([MINMAX[x][1] for x in vars]).reshape(1,-1)
+            minvars = torch.tensor([MINMAX[x][0] for x in vars]).view(shape)
+            maxvars = torch.tensor([MINMAX[x][1] for x in vars]).view(shape)
+
         return (array - minvars)/(maxvars - minvars)
 
 
@@ -81,13 +90,19 @@ class MinMax:
         Inverse MinMax normalization
         Assumes vars are on the second dimension (Channels) in order of the vars given.
         '''
+        
+        shape = [1]*len(array.shape)
+        
+        
         if len(vars) > 1: # Check for zero dimensional arrays
             assert array.shape[1] == len(vars), f"{len(vars)} vars are not equal to {array.shape[1]} the number of channels in dim=1."
+            shape[1] = array.shape[1] # (1, C, 1, ... 1)
         
         if len(vars) == 1:
             minvars = MINMAX[vars[0]][0]
             maxvars = MINMAX[vars[0]][1]
         else:
-            minvars = torch.tensor([MINMAX[x][0] for x in vars]).reshape(1,-1)
-            maxvars = torch.tensor([MINMAX[x][1] for x in vars]).reshape(1,-1)
+            minvars = torch.tensor([MINMAX[x][0] for x in vars]).view(shape)
+            maxvars = torch.tensor([MINMAX[x][1] for x in vars]).view(shape)
+                                                                        
         return array * (maxvars - minvars) + minvars

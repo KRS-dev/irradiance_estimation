@@ -22,7 +22,7 @@ LEARNING_RATE = 0.001
 BATCH_SIZE = 1024
 NUM_EPOCHS = 20
 MIN_EPOCHS = 1
-MAX_EPOCHS = 5
+MAX_EPOCHS = 1
 
 CHPT = None #'./SIS_point_estimation/ddmsa5e9/checkpoints/epoch=29-step=19680.ckpt'
 
@@ -30,7 +30,9 @@ CHPT = None #'./SIS_point_estimation/ddmsa5e9/checkpoints/epoch=29-step=19680.ck
 # DATA_DIR
 NUM_WORKERS = 12
 X_VARS = ["channel_1",]# "channel_2", "channel_3", "channel_4", "channel_5", "channel_6", "channel_7", "channel_8", "channel_9", "channel_10", "channel_11"]
-Y_VARS = ["SIS"]
+Y_VARS = ["SIS", "CAL"]
+X_FEATURES = ['SZA', 'SRTM', 'dayofyear', 'lat', 'lon', 'AZI']
+
 
 # Compute related
 ACCELERATOR = "gpu"
@@ -54,7 +56,11 @@ def main():
         filter=sza_filter_95,
     )
 
-    model = ConvResNet(num_attr=6, input_channels=len(X_VARS))
+    model = ConvResNet(
+        num_attr=6, 
+        input_channels=len(X_VARS),
+        output_channels=len(Y_VARS)
+        )
 
     if CHPT is not None:
         estimator = LitEstimatorPoint.load_from_checkpoint(

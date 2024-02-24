@@ -177,6 +177,7 @@ if __name__ == "__main__":
                         for x in customized
                     ]
                 )
+                
                 if ch.product == "HRSEVIRI_HRV":
                     offset = timedelta(minutes=12)
                     customized_dt_corrected = [
@@ -204,9 +205,7 @@ if __name__ == "__main__":
                 print(
                     f"{dt_str} {ch.product} All individual products customized already."
                 )
-            dt_ls_running.append(
-                dt_str
-            )  # Add day to list for the need to be aggregated and compressed.
+            # dt_ls_running.append(dt_str)  # Add day to list for the need to be aggregated and compressed.
 
         if len(results) > 0:
             print(f"{ch.product} Start customisation.")

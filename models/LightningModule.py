@@ -1,6 +1,6 @@
 from typing import Any
 from torch.optim import Adam
-from torchmetrics import Metric, RelativeSquaredError, MeanSquaredError, R2Score, MeanAbsoluteError, MetricCollection
+from torchmetrics import Metric, RelativeSquaredError, MeanSquaredError, R2Score, MeanAbsoluteError, MetricCollection, MeanMetric
 from torchmetrics.utilities import dim_zero_cat
 from torchmetrics.aggregation import MeanMetric
 import torch.nn as nn
@@ -11,49 +11,12 @@ from torch.optim.lr_scheduler import CosineAnnealingLR
 from utils.plotting import plot_patches, prediction_error_plot
 import wandb
 
-class MyRelativeMeanSquaredError(Metric):
-    def __init__(self, **kwargs):
-        super().__init__(**kwargs)
-        self.add_state("preds", default=[], dist_reduce_fx="cat")
-        self.add_state("target", default=[], dist_reduce_fx="cat")
-
-    def update(self, preds, target) -> None:
-        self.preds.append(preds)
-        self.target.append(target)
-
-    def compute(self):
-        # parse inputs
-        preds = dim_zero_cat(self.preds)
-        target = dim_zero_cat(self.target)
-        # some intermediate computation...
-        
-        
-        # finalize the computations
-        loss = torch.nanmean( (target-preds)**2/target**2)
-        return loss
-
-def mse_loss_with_nans(input, target):
-
-    # Missing data are nan's
-    mask = torch.isnan(target)
-
-    # Missing data are 0's
-    # mask = target == 0
-
-    out = (input[~mask]-target[~mask])**2
-    loss = out.mean()
-
-    return loss
-
-
-
 class LitEstimator(L.LightningModule):
     def __init__(self, learning_rate, model, dm):
         super().__init__()
         self.lr = learning_rate
         self.model = model
         self.metric = RelativeSquaredError()
-        self.dm = dm
         self.save_hyperparameters(ignore=["dm"])
 
     def forward(self, x):
@@ -123,15 +86,16 @@ class LitEstimator(L.LightningModule):
         scheduler = CosineAnnealingLR(optimizer, T_max=5)
         return {"optimizer": optimizer, "lr_scheduler": scheduler}
 
+
+
 class LitEstimatorPoint(L.LightningModule):
-    def __init__(self, learning_rate, model, dm):
+    def __init__(self, learning_rate, model):
         super().__init__()
         self.save_hyperparameters(ignore=["dm","y","y_hat"])
         self.lr = learning_rate
         self.model = model
         self.metric = MeanSquaredError()
-        self.other_metrics = MetricCollection([RelativeSquaredError(), MeanAbsoluteError(), R2Score()])
-        self.dm = dm
+        self.other_metrics = MetricCollection([RelativeSquaredError(), MeanAbsoluteError(), MeanMetric(), R2Score()])
         self.y = []
         self.y_hat =[]
 
@@ -183,9 +147,9 @@ class LitEstimatorPoint(L.LightningModule):
     def _shared_eval_step(self, batch, batch_idx):
         X, x, y = batch
         y_hat = self.forward(X.float(), x.float())
-        y_flat = y.reshape(-1)
-        y_hat_flat = y_hat.view(-1)
-        loss = self.metric(y_hat_flat, y_flat)
+        # y_flat = y.reshape(-1)
+        # y_hat_flat = y_hat.view(-1)
+        loss = self.metric(y_hat, y)
         return loss, y_hat.squeeze(), y.squeeze()
 
     def configure_optimizers(self):
