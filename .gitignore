@@ -94,7 +94,7 @@ SIS_estimation/
 
 # Results
 *.png
-
+*.zarr
 # pyenv
 #   For a library or package, you might want to ignore these files since the code is
 #   intended to run in multiple environments; otherwise, check them in:
