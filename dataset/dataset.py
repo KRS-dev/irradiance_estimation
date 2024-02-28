@@ -1,11 +1,6 @@
-import itertools
-from typing import Any, Callable, Dict, Hashable, Tuple
-from lightning.pytorch.utilities.types import EVAL_DATALOADERS
 
-from tqdm import tqdm
 import torch
 import pandas as pd
-from datetime import datetime
 from torch.utils.data import DataLoader, Dataset
 import xarray
 from datetime import timedelta
@@ -14,14 +9,12 @@ from preprocess.etc import benchmark
 import lightning.pytorch as L
 import numpy as np
 import pandas as pd
-from preprocess.sza import solarzenithangle
+from tqdm import tqdm
 
-import xbatcher
-import torch
 import matplotlib.pyplot as plt
 
 class ImageDataset(Dataset):
-    def __init__(self, y_vars, x_vars, x_features, patch_size, transform, target_transform):
+    def __init__(self, y_vars, x_vars, x_features, patch_size, transform, target_transform, random_sample=.1):
 
         self.hrseviri = xarray.open_zarr('/scratch/snx3000/kschuurm/DATA/HRSEVIRI_corrected.zarr')
         self.hrseviri['DEM'] = self.hrseviri.DEM.fillna(0)
@@ -46,21 +39,27 @@ class ImageDataset(Dataset):
 
         self.patches_per_image = int(np.floor((len(self.lat)-2*pad_y)/stride_y) * \
             np.floor((len(self.lon)-2*pad_x)/stride_x))
-               
+        
+        self.random_sample = random_sample
+        if self.random_sample:
+            self.sample_size = int(np.floor(self.random_sample*self.patches_per_image))
+            self.samples = np.random.randint(0, self.patches_per_image, self.sample_size)
+        else:
+            self.sample_size=self.patches_per_image
+
         self.x_features = x_features.copy()
         self.x_vars = x_vars.copy()
         self.y_vars = y_vars.copy()
-        
         self.transform = transform
         self.target_transform = target_transform
 
         self.X_image = None
         self.y_image = None
         self.image_i = None
-        self.singleImageDataset = None
+        self.current_singleImageDataset = None
 
     def __len__(self):
-        return len(self.images)*self.patches_per_image
+        return len(self.images)*self.sample_size
 
     def load_new_image(self, image_i):
         self.image_i=image_i
@@ -96,13 +95,12 @@ class ImageDataset(Dataset):
             )
 
     def __getitem__(self, i):
-        idx_image = int(np.floor(i/self.patches_per_image))
-        idx_patch = int(i % self.patches_per_image)
+        idx_image = int(np.floor(i/self.sample_size))
+        idx_patch = self.samples[int(i % self.sample_size)]
 
         if self.image_i is None:
             self.load_new_image(idx_image)
         elif self.image_i != idx_image:
-            print('new image')
             self.load_new_image(idx_image)
                 
         return self.current_singleImageDataset[idx_patch]
@@ -190,10 +188,6 @@ class SingleImageDataset(Dataset):
             
         if self.target_transform:
             self.y = self.target_transform(self.y, self.y_vars)
-            
-        # self.X[torch.isnan(self.X)] = -99
-        
-        # self.x[torch.isnan(self.x)] = -99
         
     def __len__(self):
         return self.x.shape[0]
@@ -278,6 +272,9 @@ class SingleImageDataset(Dataset):
 
 
 
+
+
+
 if __name__ == "__main__":
     
 
@@ -323,6 +320,6 @@ if __name__ == "__main__":
     dataloader= torch.utils.data.DataLoader(dataset, batch_size=config.batch_size,
                         shuffle=False, num_workers=0)
 
-    for X, x, y in dataloader:
+    for X, x, y in tqdm(dataloader):
         print(X.shape, x.shape, y.shape)
         break

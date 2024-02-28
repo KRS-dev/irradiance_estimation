@@ -1,14 +1,12 @@
 #!/bin/bash -l
-#SBATCH --job-name="train Jiang"
+#SBATCH --job-name="download RSS"
 #SBATCH --account="go41"
-#SBATCH --time=0-03:00:00
-#SBATCH --nodes=32
+#SBATCH --time=0-35:00:00
+#SBATCH --nodes=1
 #SBATCH --ntasks-per-node=1
 #SBATCH --cpus-per-task=24
-#SBATCH --partition=normal
+#SBATCH --partition=long
 #SBATCH --constraint=gpu
-#SBATCH --gres=gpu:1
-#SBATCH --signal=SIGUSR1@90
 
 
 export OMP_NUM_THREADS=$SLURM_CPUS_PER_TASK
@@ -20,4 +18,4 @@ export PYTHONFAULTHANDLER=1
 module load daint-gpu 
 source $SCRATCH/lightning/bin/activate
 
-srun -ul python main.py
+srun -ul python /scratch/snx3000/kschuurm/irradiance_estimation/download/CreateRSSDataset.py 2015 2022
