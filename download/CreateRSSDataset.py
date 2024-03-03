@@ -22,15 +22,18 @@ def main():
             dataset
             .isel(y=slice(450,1250), x=slice(1200,2400)))
             # .where(dataset["time.minute"].isin([0,15,30,45]), drop=True))
-    
+        
+        for var in dataset_sliced:
+            del dataset_sliced[var].encoding['chunks']
+
         step = 192
         data_len = len(dataset['data'])
         for i in range(0, len(dataset['data']), step):
             if i==0 and year==start_year:
                 dataset_sliced.isel(time=slice(0, step)).chunk({'y':800, 'x':1200, 'time':4}).to_zarr(save_path, mode='w')
+            else:
+                dataset_sliced.isel(time=slice(i, i+step)).chunk({'y':800, 'x':1200, 'time':4}).to_zarr(save_path, append_dim='time')
             print(100*(i+1)/data_len, '%', '  ', "total_cpu_usage", psutil.cpu_percent(interval=1))
-            
-            dataset_sliced.isel(time=slice(i, i+step)).chunk({'y':800, 'x':1200, 'time':4}).to_zarr(save_path, append_dim='time')
         print()
         print("################ FINISHED YEAR {} ######################".format(year))
         print()

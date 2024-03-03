@@ -2,13 +2,13 @@
 import torch
 import pandas as pd
 from torch.utils.data import DataLoader, Dataset
-from normalization import ZeroMinMax, MinMax
+from dataset.normalization import ZeroMinMax, MinMax
 import xarray
 import numpy as np
 from tqdm import tqdm
 
 class GroundstationDataset(Dataset):
-    def __init__(self, station_name, y_vars, x_vars, x_features, patch_size, time_window, transform=None, target_transform=None):
+    def __init__(self, station_name, y_vars, x_vars, x_features, patch_size=15, time_window=12, transform=None, target_transform=None):
         
         self.x_vars = x_vars
         self.x_features = x_features
@@ -30,6 +30,9 @@ class GroundstationDataset(Dataset):
             'IR_134':'channel_11'
         })
 
+        self.DEM = xarray.open_zarr('/scratch/snx3000/kschuurm/ZARR/DEM.zarr').sel(lat=self.station_seviri.y, lon=self.station_seviri.x)
+        self.station_seviri = xarray.merge([self.station_seviri, self.DEM], join='exact')
+
         xlen = len(self.station_seviri.x)
         imiddle = int(np.floor(xlen/2))
         phalf = int(np.floor(patch_size/2))
@@ -43,6 +46,7 @@ class GroundstationDataset(Dataset):
                         'GHI':'SIS',
                         'DNI':'DNI',
                         'DIF':'SID',
+                        'Kc':'KI',
                         'latitude':'lat',
                         'longitude':'lon',
                         'Azim': 'AZI',

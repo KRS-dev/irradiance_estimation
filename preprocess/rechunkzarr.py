@@ -2,14 +2,17 @@ import xarray
 from dask.distributed import Client
 import zarr
 
-if __name__ == '__main__':  
-    with Client(n_workers=10) as client:
-        print(client)
+from dask.diagnostics import ProgressBar
 
-        hres = xarray.open_zarr('HRSEVIRI.zarr')
-        for var in hres:
-            del hres[var].encoding['chunks']
-        print('all good before write')
-        zarray = hres.chunk({'time':60, 'lat':-1, 'lon':-1})
-        zarray.to_zarr('HRSEVIRI_30.zarr', mode = 'w')
-        print('Done')
+if __name__ == '__main__':  
+    hres = xarray.open_zarr('/scratch/snx3000/acarpent/EumetsatData/SEVIRI_WGS_2016-2022_RSS.zarr',
+                            overwrite_encoded_chunks=True,
+                            chunks={'time':1, 'x':-1, 'y':-1})
+    
+    hres = hres.chunk({'time':1, 'x':-1, 'y':-1})
+    delayed = hres.to_zarr('/scratch/snx3000/kschuurm/ZARR/SEVIRI.zarr', mode = 'w', compute=False)
+
+
+    with ProgressBar():
+        out = delayed.compute()
+    print('Done')
