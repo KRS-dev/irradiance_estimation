@@ -63,7 +63,8 @@ class GroundstationDataset(Dataset):
                 'lon':'lon_'
             })
             self.station = self.station.assign({'lat':self.station.lat_,
-                                       'lon':self.station.lon_,})
+                                       'lon':self.station.lon_,
+                                       'DEM':self.station.elevation})
 
 
 

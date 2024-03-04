@@ -5,8 +5,6 @@ import pandas as pd
 from torch.utils.data import DataLoader, Dataset
 import xarray
 from datetime import timedelta
-from xbatcher import BatchGenerator
-from preprocess.etc import benchmark
 import lightning.pytorch as L
 import numpy as np
 import pandas as pd
@@ -71,8 +69,8 @@ class ImageDataset(Dataset):
 
         self.seviri = (
             xarray.open_zarr(
-                "/scratch/snx3000/acarpent/EumetsatData/SEVIRI_WGS_2016-2022_RSS.zarr"
-            )
+                "/scratch/snx3000/kschuurm/ZARR/SEVIRI_new.zarr"
+            ).channel_data.to_dataset(dim='channel') 
             .rename_dims({"x": "lon", "y": "lat"})
             .rename_vars(
                 {
@@ -116,9 +114,6 @@ class ImageDataset(Dataset):
             print("pre dropnan", len(self.seviri.time))
             self.seviri = self.seviri.dropna(dim="time")
             print("dropnan", len(self.seviri.time))
-            print("pre dropnan", len(self.sarah.time))
-            self.sarah = self.sarah.dropna(dim="time")
-            print("dropnan", len(self.sarah.time))
 
             timenotnan = set(self.seviri.time.values).intersection(
                 set(self.sarah.time.values)
@@ -423,7 +418,7 @@ class SingleImageDataset(Dataset):
             lat = self.transform.inverse(x_xr.lat, ["lat"])
             lon = self.transform.inverse(x_xr.lon, ["lon"])
             x_xr["lat"] = lat
-            x_xr["lon"] = lon
+            x_xr["lon"] = lon   
 
         x_xr = x_xr.set_coords(["lat", "lon"])
         y_xr = xarray.Dataset(

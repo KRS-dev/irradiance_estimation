@@ -2,7 +2,7 @@ import torch
 import wandb
 from dataset.dataset import MSGDataModule, MSGDataModulePoint
 from dataset.normalization import MinMax
-from dataset.filters import sza_filter_95
+from dataset.old.filters import sza_filter_95
 from models.ConvResNet_Jiang import ConvResNet
 from models.FNO import FNO2d
 from models.LightningModule import LitEstimator, LitEstimatorPoint
