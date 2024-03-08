@@ -91,7 +91,10 @@ wandb/
 # Lightning
 lightning_logs/
 SIS_estimation/
-
+SIS_point_estimation/
+train/SIS_point_estimation/
+train/lightning_logs/
+train/SIS_point_estimation_groundstation/
 # Results
 *.png
 *.zarr

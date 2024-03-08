@@ -28,9 +28,9 @@ MINMAX_old = {
 }
 
 MINMAX = {
-    "SIS": (0.0, 1109.0),
+    "SIS": (0.0, 1159.0),
     "CAL": (0.0, 1.0),
-    "SID": (0.0, 600),
+    "SID": (0.0, 1071),
     "KI": (0.0, 1.0),
     "DNI": (0.0, 1100.0),
     "DEM": (-7.6700854700854695, 3746.053675213676),
@@ -55,6 +55,9 @@ MINMAX = {
 class MinMax:
     def __init__(self):
         pass
+
+    def __str__(self):
+        return 'MinMax'
     
     def __call__(self, array, vars=None):
         if isinstance(array, xarray.Dataset):
@@ -137,6 +140,9 @@ class ZeroMinMax:
     def __init__(self):
         pass
     
+    def __str__(self):
+        return 'ZeroMinMax'
+
     def __call__(self, array, vars=None):
         if isinstance(array, xarray.Dataset):
             output = self.forward_dataset(array)

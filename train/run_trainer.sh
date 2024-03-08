@@ -1,8 +1,8 @@
 #!/bin/bash -l
-#SBATCH --job-name="train Jiang"
+#SBATCH --job-name="train Jiang test"
 #SBATCH --account="go41"
-#SBATCH --time=0-03:00:00
-#SBATCH --nodes=32
+#SBATCH --time=0-02:10:00
+#SBATCH --nodes=1
 #SBATCH --ntasks-per-node=1
 #SBATCH --cpus-per-task=24
 #SBATCH --partition=normal
@@ -20,4 +20,4 @@ export PYTHONFAULTHANDLER=1
 module load daint-gpu 
 source $SCRATCH/lightning/bin/activate
 
-srun -ul python main.py
+srun -ul python train.py

@@ -81,10 +81,11 @@ def scatter_hist(x, y, ax, ax_histx, ax_histy, cax, output_var="SIS"):
     ax_histx.hist(x, bins=bins, color=c_hist, density=True)
     ax_histy.hist(y, bins=bins, color=c_hist, orientation="horizontal", density=True)
     ax_histx.set_title(f"{output_var}")
-    ax_histy.set_title(f"{output_var} prediction")
+    ax_histy.set_ylabel(f"{output_var} prediction", loc='center')
+    ax_histy.yaxis.set_label_position("right")
 
 
-def prediction_error_plot(y, y_hat, output_var="SIS"):
+def prediction_error_plot(y, y_hat, output_var="SIS", title=None):
 
     y = y.reshape(-1)
     y_hat = y_hat.reshape(-1)
@@ -102,7 +103,7 @@ def prediction_error_plot(y, y_hat, output_var="SIS"):
     gs = fig.add_gridspec(
         3,
         4,
-        width_ratios=(0.3, 0.2, 4, 1),
+        width_ratios=(0.3, 0.5, 4, 1),
         height_ratios=(1, 4, 0.5),
         left=0.1,
         right=0.9,
@@ -116,8 +117,11 @@ def prediction_error_plot(y, y_hat, output_var="SIS"):
     ax_histx = fig.add_subplot(gs[0, 2], sharex=ax)
     ax_histy = fig.add_subplot(gs[1, 3], sharey=ax)
     cax = fig.add_subplot(gs[1, 0])
+    cax.set_title(title)
     # Draw the scatter plot and marginals.
     scatter_hist(y, y_hat, ax, ax_histx, ax_histy, cax, output_var=output_var)
+    ax.set_xlim(0, 1100)
+    ax.set_ylim(0, 1100)
 
     return fig
 
@@ -200,3 +204,51 @@ def best_worst_plot(
     fig.tight_layout()
 
     return fig
+
+
+def SZA_error_plot(SZA, SIS_error):
+
+    bins =  np.arange(0, 9/16*np.pi, np.pi/16)
+    sza_bins_labels = np.rad2deg(bins)
+    bin_indices = np.digitize(SZA.cpu(),bins)
+    SZAs_errors = [SIS_error[bin_indices == i] for i in range(len(bins))]
+
+
+    fig, ax = plt.subplots(nrows=1, ncols=1, figsize=(7, 4))
+        
+    # ax1.set_xticks(bins[::5])
+    SZAboxplot = ax.boxplot(
+        SZAs_errors, 
+        vert=True,
+        sym='',
+        notch=True,
+        patch_artist=True, 
+        labels=sza_bins_labels)
+    
+    
+    ax.set_title('Error distribution due to SZA')
+    ax.set_ylabel('SIS error [w/m^2]')
+    ax.set_xlabel('Solar Zenith Angle (degrees)')
+    return fig, SZAboxplot
+ 
+
+def dayofyear_error_plot(dayofyear, SIS_error):
+    dayofyear_bins = np.arange(0, 365, 7)
+    dayofyear_bins_labels = np.arange(0,53,1)
+    bin_indices = np.digitize(dayofyear, dayofyear_bins)
+    dayofyears_errors = [SIS_error[bin_indices == i] for i in range(len(dayofyear_bins))]
+
+    fig, ax = plt.subplots(nrows=1, ncols=1, figsize=(7, 4))
+    dayofyearboxplot = ax.boxplot(
+        dayofyears_errors,
+        vert=True,
+        sym='',
+        notch=True,
+        patch_artist=True,
+        labels=dayofyear_bins_labels,
+        )
+    ax.set_title('Error distribution due to seasonality')
+    ax.set_ylabel('SIS error [w/m^2]')
+    ax.set_xlabel('Week of the year')
+
+    return fig, dayofyearboxplot

@@ -1,114 +1,137 @@
+import matplotlib.pyplot as plt
+import numpy as np
+import pandas as pd
 import torch
+from torch.utils.data import DataLoader, Dataset
 import wandb
-from dataset.dataset import MSGDataModule, MSGDataModulePoint
-from dataset.normalization import MinMax
-from dataset.old.filters import sza_filter_95
-from models.ConvResNet_Jiang import ConvResNet
-from models.FNO import FNO2d
-from models.LightningModule import LitEstimator, LitEstimatorPoint
+import xarray
+from dataset.dataset import ImageDataset, valid_test_split
+from dataset.normalization import MinMax, ZeroMinMax
 from lightning.pytorch import Trainer
 from lightning.pytorch.loggers import WandbLogger
 from lightning.pytorch.plugins.environments import SLURMEnvironment
 from lightning.pytorch.utilities import rank_zero_only
+from models.ConvResNet_Jiang import ConvResNet, ConvResNet_dropout
+from models.LightningModule import LitEstimator, LitEstimatorPoint
+from tqdm import tqdm
 
 # from pytorch_lightning.pytorch.callbacks import DeviceStatsMonitor
-from train import config
-from utils.plotting import best_worst_plot, prediction_error_plot
+from types import SimpleNamespace
 
-# Training Hyperparameters
-PATCH_SIZE = (15, 15)
-PATCH_OVERLAP = {'lat':10,'lon':10} # dataset sampled with overlapping (15,15) patches
-LEARNING_RATE = 0.001
-BATCH_SIZE = 1024
-NUM_EPOCHS = 20
-MIN_EPOCHS = 1
-MAX_EPOCHS = 1
-
-CHPT = None #'./SIS_point_estimation/ddmsa5e9/checkpoints/epoch=29-step=19680.ckpt'
-
-# Dataset
-# DATA_DIR
-NUM_WORKERS = 12
-X_VARS = ["channel_1",]# "channel_2", "channel_3", "channel_4", "channel_5", "channel_6", "channel_7", "channel_8", "channel_9", "channel_10", "channel_11"]
-Y_VARS = ["SIS", "CAL"]
-X_FEATURES = ['SZA', 'SRTM', 'dayofyear', 'lat', 'lon', 'AZI']
-
-
-# Compute related
-ACCELERATOR = "gpu"
-DEVICES = -1
-NUM_NODES = 32
-STRATEGY = "ddp"
-PRECISION = 32
-
+config = {
+    "batch_size": 2048,
+    "patch_size": {
+        "x": 15,
+        "y": 15,
+        "stride_x": 4,
+        "stride_y": 4,
+    },
+    "x_vars": [
+        "channel_1",
+        "channel_2",
+        "channel_3",
+        "channel_4",
+        "channel_5",
+        "channel_6",
+        "channel_7",
+        "channel_8",
+        "channel_9",
+        "channel_10",
+        "channel_11",
+        "DEM",
+    ],
+    "y_vars": ["SIS"],
+    "x_features": ["dayofyear", "lat", "lon", 'SZA', "AZI", "DEM"],
+    "transform": ZeroMinMax(),
+    "target_transform": ZeroMinMax(),
+    # Compute related
+    'ACCELERATOR': "gpu",
+    'DEVICES': -1,
+    'NUM_NODES': 1,
+    'STRATEGY': "ddp",
+    'PRECISION': "32",
+}
+config = SimpleNamespace(**config)
 
 
 def main():
-    dm = MSGDataModulePoint(
-        batch_size=BATCH_SIZE,
-        num_workers=NUM_WORKERS,
-        patch_size=PATCH_SIZE,
-        input_overlap= PATCH_OVERLAP,
-        x_vars=X_VARS,
-        y_vars=Y_VARS,
-        transform=MinMax(),
-        target_transform=MinMax(),
-        filter=sza_filter_95,
+
+    sarah_bnds = xarray.open_zarr('/scratch/snx3000/kschuurm/ZARR/SARAH3_bnds.zarr').load()
+    sarah_bnds = sarah_bnds.isel(time = sarah_bnds.pixel_count != -1)
+    seviri = xarray.open_zarr("/scratch/snx3000/kschuurm/ZARR/SEVIRI_new.zarr")
+    seviri_time = pd.DatetimeIndex(seviri.time)
+    timeindex= pd.DatetimeIndex(sarah_bnds.time)
+    timeindex = timeindex.intersection(seviri_time)
+    timeindex = timeindex[(timeindex.hour >10) & (timeindex.hour <17)]
+
+    _, traintimeindex = valid_test_split(timeindex[(timeindex.year == 2016)])
+    _, validtimeindex = valid_test_split(timeindex[(timeindex.year == 2017)])
+
+    train_dataset = ImageDataset(
+        x_vars=config.x_vars,
+        y_vars=config.y_vars,
+        x_features=config.x_features,
+        patch_size=config.patch_size,
+        transform=config.transform,
+        target_transform=config.target_transform,
+        timeindices=traintimeindex,
+        # random_sample=1,
+        batch_in_time=10,
     )
+    valid_dataset = ImageDataset(
+        x_vars=config.x_vars,
+        y_vars=config.y_vars,
+        x_features=config.x_features,
+        patch_size={
+            "x": config.patch_size["x"],
+            "y": config.patch_size["y"],
+            "stride_x": 4,
+            "stride_y": 4,
+        },
+        transform=config.transform,
+        target_transform=config.target_transform,
+        timeindices=validtimeindex[::10],
+        random_sample=None,
+        shuffle=False,
+        batch_in_time=10,
+    )
+    train_dataloaders = DataLoader(train_dataset, shuffle=False, num_workers=0)
+    valid_dataloaders = DataLoader(valid_dataset, shuffle=False, num_workers=0)
 
     model = ConvResNet(
-        num_attr=6, 
-        input_channels=len(X_VARS),
-        output_channels=len(Y_VARS)
-        )
-
-    if CHPT is not None:
-        estimator = LitEstimatorPoint.load_from_checkpoint(
-            CHPT,
-            model=model,
-            learning_rate=LEARNING_RATE,
-            dm=dm,
-        )
-    else:
-        estimator = LitEstimatorPoint(
-            model=model,
-            learning_rate=LEARNING_RATE,
-            dm=dm,
-        )
-
-
+        num_attr=len(config.x_features),
+        input_channels=len(config.x_vars),
+        output_channels=len(config.y_vars),
+    )
     wandb_logger = WandbLogger(project="SIS_point_estimation", log_model=True)
-    
-    if rank_zero_only.rank == 0: # only update the wandb.config on the rank 0 process
-        wandb_logger.experiment.config.update({
-            "PATCH_SIZE":PATCH_SIZE,
-            "PATCH_OVERLAP":PATCH_OVERLAP,
-            "X_VARS":X_VARS,
-            "Y_VARS":Y_VARS,
-            "TRANSFORM": [str(dm.transform)],
-            "CHPT_START": CHPT,
-            "FILTER":"SZA < 95*",
-        })
+
+    if rank_zero_only.rank == 0:  # only update the wandb.config on the rank 0 process
+        wandb_logger.experiment.config.update(vars(config))
 
     trainer = Trainer(
         # profiler="simple",
         # fast_dev_run=True,
         num_sanity_val_steps=2,
         logger=wandb_logger,
-        accelerator=ACCELERATOR,
-        devices=DEVICES,
-        num_nodes=NUM_NODES,
-        strategy=STRATEGY,
-        min_epochs=MIN_EPOCHS,
-        max_epochs=MAX_EPOCHS,
-        precision=PRECISION,
-        log_every_n_steps=200,
-        val_check_interval=.5,
-        plugins=[SLURMEnvironment(auto_requeue=False)],
+        accelerator=config.ACCELERATOR,
+        devices=config.DEVICES,
+        min_epochs=1,
+        max_epochs=4,
+        precision=config.PRECISION,
+        log_every_n_steps=500,
+        val_check_interval=0.25,
     )
 
-    trainer.fit(model=estimator, train_dataloaders=dm)
+    estimator = LitEstimatorPoint(
+        model=model,
+        learning_rate=0.001,
+        config=config,
+    )
+    trainer.fit(
+        estimator, train_dataloaders=train_dataloader, val_dataloaders=valid_dataloader
+    )
 
+    wandb.finish()
 
 if __name__ == "__main__":
     

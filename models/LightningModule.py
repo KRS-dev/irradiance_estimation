@@ -13,6 +13,9 @@ import torch
 from torch.optim.lr_scheduler import CosineAnnealingLR
 from utils.plotting import plot_patches, prediction_error_plot
 import wandb
+from utils.plotting import SZA_error_plot, dayofyear_error_plot
+import cartopy.crs as ccrs
+import cartopy.feature as cfeature
 
 class LitEstimator(L.LightningModule):
     def __init__(self, learning_rate, model, dm):
@@ -21,7 +24,7 @@ class LitEstimator(L.LightningModule):
         self.model = model
         self.metric = RelativeSquaredError()
         self.save_hyperparameters()
-
+    
     def forward(self, x):
         return self.model(x)
 
@@ -99,9 +102,9 @@ class LitEstimatorPoint(L.LightningModule):
         self.model = model
         self.transform = config.transform
         self.y_vars = config.y_vars
-        self.x_vars = config.x_features
-        self.metric = RelativeSquaredError()
-        self.other_metrics = MetricCollection([MeanSquaredError(), MeanAbsoluteError(), MeanMetric(), R2Score()])
+        self.x_features = config.x_features
+        self.metric = MeanSquaredError()
+        self.other_metrics = MetricCollection([RelativeSquaredError(), MeanAbsoluteError(), MeanMetric(), R2Score()])
         self.y = []
         self.y_hat =[]
         self.x_attr = []
@@ -137,78 +140,57 @@ class LitEstimatorPoint(L.LightningModule):
         y_hat = torch.cat(self.y_hat)
         x_attr = torch.cat(self.x_attr)
 
+        losses = self.other_metrics(y_hat, y)
+        self.log_dict(losses, logger=True, sync_dist=True)
+
         if self.transform:
             y_hat = self.transform.inverse(y_hat.cpu(), self.y_vars)
             y = self.transform.inverse(y.cpu(), self.y_vars)
-            x_attr = self.transform.inverse(x_attr.cpu(), self.x_vars)
-
+            x_attr = self.transform.inverse(x_attr.cpu(), self.x_features)
+        
         error = y_hat - y
-        SIS_error = error[:, 0]
-        if 'SZA' in self.x_vars and 'dayofyear' in self.x_vars:
-            idx = self.x_vars.index('SZA')
-            SZA = x_attr[:, idx]
-            idx = self.x_vars.index('dayofyear')
-            dayofyear = x_attr[:, idx]
+        if len(self.y_vars)>1:
+            SIS_error = error[:, error.index('SIS')]
+        else:
+            SIS_error = error
 
-            bins =  np.arange(0, np.pi, np.pi/8)
-            sza_bins_labels = np.rad2deg(bins)
-            bin_indices = np.digitize(SZA.cpu(),bins)
-            SZAs_errors = [SIS_error[bin_indices == i] for i in range(len(bins))]
+        if 'SZA' in self.x_features and 'dayofyear' in self.x_features:
+            SZA = x_attr[:, self.x_features.index('SZA')]
+            dayofyear = x_attr[:, self.x_features.index('dayofyear')]
 
-            bins = np.arange(0, 365, 7)
-            dayofyear_bins_labels = np.arange(0,52)
-            bin_indices = np.digitize(dayofyear, bins)
-            dayofyears_errors = [SIS_error[bin_indices == i] for i in range(len(bins))]
+            SZA_fig, _ = SZA_error_plot(SZA, SIS_error)
+            dayofyear_fig, _ = dayofyear_error_plot(dayofyear, SIS_error)
 
-            fig, (ax1, ax2) = plt.subplots(nrows=1, ncols=2, figsize=(9, 4))
-            dayofyearboxplot = ax1.boxplot(
-                dayofyears_errors,
-                vert=True,
-                sym=None,
-                notch=True,
-                patch_artist=True,
-                labels=dayofyear_bins_labels)
-            SZAboxplot = ax2.boxplot(
-                SZAs_errors, 
-                vert=True,
-                sym=None,
-                notch=True,
-                patch_artist=True, 
-                labels=sza_bins_labels)
-            
-            ax1.set_title('Error distribution within the year')
-            ax1.set_ylabel('SIS error [w/m^2]')
-            ax1.set_xlabel('Week of the year')
-            ax2.set_title('SZA')
-            ax2.set_xlabel('Solar Zenith Angle (degrees)')
-            self.logger.log_image(key="Error SZA and dayofyear", images=[fig])
+            self.logger.log_image(key="y_hat - y, distribution SZA and dayofyear", images=[SZA_fig, dayofyear_fig])
        
 
-        
-        losses = self.other_metrics(y_hat.reshape(-1), y.reshape(-1))
-        self.log_dict(losses, logger=True, sync_dist=True)
-
         figs = []
-        for i in range(y.shape[1]):
-            fig = prediction_error_plot(y[:, i].cpu(), y_hat[:, i].cpu(), self.y_vars[i])
+        if len(self.y_vars) > 1:
+            for i in range(y.shape[1]):
+                fig = prediction_error_plot(y[:, i].cpu(), y_hat[:, i].cpu(), self.y_vars[i])
+                figs.append(fig)
+        else:
+            fig = prediction_error_plot(y.cpu(), y_hat.cpu(), self.y_vars[0])
             figs.append(fig)
         self.logger.log_image(key="Prediction error groundstations", images=figs)
     
     def predict_step(self, batch, batch_idx):
         X, x, y = batch
         y_hat = self.forward(X.float(), x.float())
-        return y_hat, x
+        return y_hat, y, x
 
     def on_validation_epoch_end(self):
-
         y = torch.cat(self.y)
         y_hat = torch.cat(self.y_hat)
         x_attr = torch.cat(self.x_attr)
 
+        losses = self.other_metrics(y_hat, y)
+        self.log_dict(losses, logger=True, sync_dist=True)
+
         if self.transform:
             y_hat = self.transform.inverse(y_hat.cpu(), self.y_vars)
             y = self.transform.inverse(y.cpu(), self.y_vars)
-            x_attr = self.transform.inverse(x_attr.cpu(), self.x_vars)
+            x_attr = self.transform.inverse(x_attr.cpu(), self.x_features)
 
         error = y_hat - y
         if len(self.y_vars)>1:
@@ -216,64 +198,34 @@ class LitEstimatorPoint(L.LightningModule):
         else:
             SIS_error = error
         
-        if 'SZA' in self.x_vars and 'dayofyear' in self.x_vars:
-            SZA = x_attr[:, self.x_vars.index('SZA')]
-            dayofyear = x_attr[:, self.x_vars.index('dayofyear')]
+        if 'SZA' in self.x_features and 'dayofyear' in self.x_features:
+            SZA = x_attr[:, self.x_features.index('SZA')]
+            dayofyear = x_attr[:, self.x_features.index('dayofyear')]
 
-            bins =  np.arange(0, 9/16*np.pi, np.pi/16)
-            sza_bins_labels = np.rad2deg(bins)
-            bin_indices = np.digitize(SZA.cpu(),bins)
-            SZAs_errors = [SIS_error[bin_indices == i] for i in range(len(bins))]
+            SZA_fig, _ = SZA_error_plot(SZA, SIS_error)
+            dayofyear_fig, _ = dayofyear_error_plot(dayofyear, SIS_error)
+            self.logger.log_image(key="y_hat - y, distribution SZA and dayofyear", images=[SZA_fig, dayofyear_fig])
 
-            dayofyear_bins = np.arange(0, 365, 7)
-            dayofyear_bins_labels = np.arange(0,53,1)
-            bin_indices = np.digitize(dayofyear, dayofyear_bins)
-            dayofyears_errors = [SIS_error[bin_indices == i] for i in range(len(dayofyear_bins))]
-
-            fig, (ax1, ax2) = plt.subplots(nrows=1, ncols=2, figsize=(9, 4))
-            dayofyearboxplot = ax1.boxplot(
-                dayofyears_errors,
-                vert=True,
-                sym='',
-                notch=True,
-                patch_artist=True,
-                labels=dayofyear_bins_labels
-                )
-            # ax1.set_xticks(bins[::5])
-            SZAboxplot = ax2.boxplot(
-                SZAs_errors, 
-                vert=True,
-                sym='',
-                notch=True,
-                patch_artist=True, 
-                labels=sza_bins_labels)
-            
-            ax1.set_title('Error distribution due to seasonality')
-            ax1.set_ylabel('SIS error [w/m^2]')
-            ax1.set_xlabel('Week of the year')
-            ax2.set_title('Error distribution due to SZA')
-            ax2.set_xlabel('Solar Zenith Angle (degrees)')
-            self.logger.log_image(key="Error SZA and dayofyear", images=[fig])
         
-        if 'lat' in self.x_vars and 'lon' in self.x_vars:
-            lat = x_attr[:, self.x_vars.index('lat')]
-            lon = x_attr[:, self.x_vars.index('lon')]
+        if 'lat' in self.x_features and 'lon' in self.x_features:
+            lat = x_attr[:, self.x_features.index('lat')]
+            lon = x_attr[:, self.x_features.index('lon')]
 
             step = 0.5
             lat_bins =  np.arange(np.floor(torch.min(lat)), torch.max(lat) + step, step)
             lon_bins = np.arange(np.floor(torch.min(lon)), torch.max(lon) + step, step)
-            mean_error, x_edge, y_edge, _ = binned_statistic_2d(lat, lon, SIS_error, bins = [lat_bins, lon_bins])
+            mean_error, y_edge, x_edge, _ = binned_statistic_2d(lat, lon, SIS_error, bins = [lat_bins, lon_bins])
+
+            proj = ccrs.PlateCarree()
             
-            fig, ax = plt.subplots(nrows=1, ncols=1, figsize=(8, 8))
-            fig.colorbar(cax=ax)
-            ax.pcolormesh(x_edge, y_edge, mean_error.T, shading='auto')
+            fig, ax = plt.subplots(nrows=1, ncols=1, figsize=(8, 8), subplot_kw={'projection': proj})
+            ax.add_feature(cfeature.BORDERS, facecolor="green")
+            pmesh = ax.pcolormesh(x_edge, y_edge, mean_error.T, shading='auto', transform=proj)
+            fig.colorbar(pmesh)
             ax.set_title('Error distribution Location')
             ax.set_ylabel('Longitude')
             ax.set_xlabel('Latitude')
             self.logger.log_image(key="Error Location", images=[fig])
-
-        losses = self.other_metrics(y_hat.reshape(-1), y.reshape(-1))
-        self.log_dict(losses, logger=True, sync_dist=True)
 
         figs = []
         if len(self.y_vars) > 1:
@@ -300,8 +252,22 @@ class LitEstimatorPoint(L.LightningModule):
         loss = self.metric(y_hat, y)
         return loss, y_hat.squeeze(), y.squeeze()
 
-    def configure_optimizers(self):
-        optimizer = Adam(self.parameters(), lr=self.lr)
-        scheduler = CosineAnnealingLR(optimizer, T_max=1)
-        return {"optimizer": optimizer, "lr_scheduler": scheduler}
+    # def configure_optimizers(self):
+    #     optimizer = Adam(self.parameters(), lr=self.lr)
+    #     scheduler = CosineAnnealingLR(optimizer, T_max=1)
+    #     return {"optimizer": optimizer, "lr_scheduler": scheduler}
     
+    def configure_optimizers(self):
+        optimizer = torch.optim.AdamW(self.parameters(), lr=self.lr,
+                                      betas=(0.5, 0.9), weight_decay=1e-3)
+        reduce_lr = torch.optim.lr_scheduler.ReduceLROnPlateau(
+            optimizer, patience=2, factor=0.25, verbose=True
+        )
+        return {
+            "optimizer": optimizer,
+            "lr_scheduler": {
+                "scheduler": reduce_lr,
+                "monitor": "MeanAbsoluteError",
+                "frequency": 1,
+            },
+        }
