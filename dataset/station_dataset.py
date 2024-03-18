@@ -14,98 +14,85 @@ class GroundstationDataset(Dataset):
         self.x_vars = x_vars
         self.x_features = x_features
         self.y_vars = y_vars
-        with benchmark('load'):
-            self.station_seviri = xarray.open_zarr(f'/scratch/snx3000/kschuurm/ZARR/{station_name}/SEVIRI_{station_name}.zarr') \
-                                        .drop_duplicates('time')
-        with benchmark('rename'):
-            self.station_seviri = self.station_seviri.rename(
-                {'y':'lat','x':'lon'}
-                ).rename_vars({
-                'VIS006':'channel_1',
-                'VIS008':'channel_2',
-                'IR_016':'channel_3',
-                'IR_039':'channel_4',
-                'WV_062':'channel_5',
-                'WV_073':'channel_6',
-                'IR_087':'channel_7',   
-                'IR_097':'channel_8',
-                'IR_108':'channel_9',
-                'IR_120':'channel_10',
-                'IR_134':'channel_11',
-            })
-        with benchmark('dem load'):
+        self.station_seviri = xarray.open_zarr(f'/scratch/snx3000/kschuurm/ZARR/{station_name}/SEVIRI_{station_name}.zarr') \
+                                    .drop_duplicates('time')
+        self.station_seviri = self.station_seviri.rename(
+            {'y':'lat','x':'lon'}
+            ).rename_vars({
+            'VIS006':'channel_1',
+            'VIS008':'channel_2',
+            'IR_016':'channel_3',
+            'IR_039':'channel_4',
+            'WV_062':'channel_5',
+            'WV_073':'channel_6',
+            'IR_087':'channel_7',   
+            'IR_097':'channel_8',
+            'IR_108':'channel_9',
+            'IR_120':'channel_10',
+            'IR_134':'channel_11',
+        })
 
-            self.dem = xarray.open_zarr('/scratch/snx3000/kschuurm/ZARR/DEM.zarr').sel(lat=self.station_seviri.lat, lon=self.station_seviri.lon)
-            # self.station_seviri = xarray.merge([self.station_seviri, self.DEM], join='exact')
+        self.dem = xarray.open_zarr('/scratch/snx3000/kschuurm/ZARR/DEM.zarr').sel(lat=self.station_seviri.lat, lon=self.station_seviri.lon)
+        # self.station_seviri = xarray.merge([self.station_seviri, self.DEM], join='exact')
 
         xlen = len(self.station_seviri.lon)
         imiddle = int(np.floor(xlen/2))
         phalf = int(np.floor(patch_size/2))
 
-        with benchmark('isel'):
-            self.station_seviri = self.station_seviri.isel(lat=slice(imiddle-phalf, imiddle+phalf +1),
-                                                            lon=slice(imiddle-phalf, imiddle+phalf +1))
-            self.dem = self.dem.isel(lat=slice(imiddle-phalf, imiddle+phalf +1),
-                                    lon=slice(imiddle-phalf, imiddle+phalf +1))
+        self.station_seviri = self.station_seviri.isel(lat=slice(imiddle-phalf, imiddle+phalf +1),
+                                                        lon=slice(imiddle-phalf, imiddle+phalf +1))
+        self.dem = self.dem.isel(lat=slice(imiddle-phalf, imiddle+phalf +1),
+                                lon=slice(imiddle-phalf, imiddle+phalf +1))
 
-        with benchmark('station load'):
-            self.station = xarray.open_zarr('/scratch/snx3000/kschuurm/ZARR/IEA_PVPS_europe.zarr')  \
-                        .sel(station_name=station_name) \
-                        .rename_vars({
-                            'GHI':'SIS',
-                            'DNI':'DNI',
-                            'DIF':'SID',
-                            'Kc':'KI',
-                            'latitude':'lat',
-                            'longitude':'lon',
-                            'Azim': 'AZI',
-                        }).load()
+        self.station = xarray.open_zarr('/scratch/snx3000/kschuurm/ZARR/IEA_PVPS_europe.zarr')  \
+                    .sel(station_name=station_name) \
+                    .rename_vars({
+                        'GHI':'SIS',
+                        'DNI':'DNI',
+                        # 'DIF':'SID',
+                        'Kc':'KI',
+                        'latitude':'lat',
+                        'longitude':'lon',
+                        'Azim': 'AZI',
+                    }).load()
 
-        with benchmark('AZI'):
-            self.station['SZA'] = (90 - self.station['Elev'] )/180*np.pi # SZA = 90 - Elev, [0, 90*] or [0, 1/2pi]
-            self.station['AZI'] = self.station['AZI']/180*np.pi # AZI [0, 360*] or [0, 2pi]
+        self.station['SZA'] = (90 - self.station['Elev'] )/180*np.pi # SZA = 90 - Elev, [0, 90*] or [0, 1/2pi]
+        self.station['AZI'] = self.station['AZI']/180*np.pi # AZI [0, 360*] or [0, 2pi]
 
-        with benchmark('dayofyear'):
-            if 'dayofyear' in x_features:
-                self.station['dayofyear'] = self.station.time.dt.dayofyear
+        if 'dayofyear' in x_features:
+            self.station['dayofyear'] = self.station.time.dt.dayofyear
 
-        with benchmark('lat'):
-            if 'lat' in x_features:
-                self.station = self.station.rename_vars({
-                    'lat':'lat_',
-                    'lon':'lon_'
-                })
-                self.station = self.station.assign({'lat':self.station.lat_,
-                                        'lon':self.station.lon_,
-                                        'DEM':self.station.elevation})
+        if 'lat' in x_features:
+            self.station = self.station.rename_vars({
+                'lat':'lat_',
+                'lon':'lon_'
+            })
+            self.station = self.station.assign({'lat':self.station.lat_,
+                                    'lon':self.station.lon_,
+                                    'DEM':self.station.elevation})
 
+        self.rolling_station = self.station.rolling(time=time_window,center=False) \
+                                    .mean(skipna=True) # center=False puts the time index for the mean at the right most corner, we want the left most corner
+        self.rolling_station['time'] = self.rolling_station['time'] - np.timedelta64(time_window, 'm')
 
-        with benchmark('rolling'):
-            self.rolling_station = self.station.rolling(time=time_window,center=False) \
-                                        .mean(skipna=True) # center=False puts the time index for the mean at the right most corner, we want the left most corner
-        with benchmark('rolling correction'):
-            self.rolling_station['time'] = self.rolling_station['time'] - np.timedelta64(time_window, 'm')
+        # select available time slices
+        self.timeidxnotnan = np.load(f'/scratch/snx3000/kschuurm/ZARR/{station_name}/timeidxnotnan.npy')
+        self.rolling_station = self.rolling_station.sel(time=self.timeidxnotnan)
+        self.station_seviri = self.station_seviri.sel(time=self.timeidxnotnan)
 
-        with benchmark('sel timeidx'):
-            # select available time slices
-            self.timeidxnotnan = np.load(f'/scratch/snx3000/kschuurm/ZARR/{station_name}/timeidxnotnan.npy')
-            self.rolling_station = self.rolling_station.sel(time=self.timeidxnotnan)
-            self.station_seviri = self.station_seviri.sel(time=self.timeidxnotnan)
+        x_vars = [v for v in self.x_vars if v in self.station_seviri.keys()]
+        self.X = torch.Tensor(self.station_seviri[x_vars].to_dataarray(dim="channels").values) # CxTxHxW
+        self.X = self.X.permute(1,0, 2,3) # TxCxHxW
+        if 'DEM' in self.x_vars:
+            X_DEM = torch.Tensor(self.dem['DEM'].values) # HxW
+            X_DEM = X_DEM[None, None, :, :].repeat(self.X.shape[0], 1,1,1)
+            self.X = torch.cat([self.X, X_DEM], dim=1)
 
-        with benchmark('values'):
-            x_vars = [v for v in self.x_vars if v in self.station_seviri.keys()]
-            self.X = torch.Tensor(self.station_seviri[x_vars].to_dataarray(dim="channels").values) # CxTxHxW
-            self.X = self.X.permute(1,0, 2,3) # TxCxHxW
-            if 'DEM' in self.x_vars:
-                X_DEM = torch.Tensor(self.dem['DEM'].values) # HxW
-                X_DEM = X_DEM[None, None, :, :].repeat(self.X.shape[0], 1,1,1)
-                self.X = torch.cat([self.X, X_DEM], dim=1)
+        self.y = torch.Tensor(self.rolling_station[self.y_vars].to_dataarray(dim="channels").values) # CxT
+        self.y = self.y.permute(1,0) # TxC
 
-            self.y = torch.Tensor(self.rolling_station[self.y_vars].to_dataarray(dim="channels").values) # CxT
-            self.y = self.y.permute(1,0) # TxC
-
-            self.x = torch.Tensor(self.rolling_station[self.x_features].to_dataarray(dim="channels").values) # CxT
-            self.x = self.x.permute(1,0) # TxC
+        self.x = torch.Tensor(self.rolling_station[self.x_features].to_dataarray(dim="channels").values) # CxT
+        self.x = self.x.permute(1,0) # TxC
 
         self.transform = transform
         self.target_transform = target_transform

@@ -42,11 +42,11 @@ def get_pickled_sarah_bnds():
     else:
         sarah_bnds = xarray.open_zarr('/scratch/snx3000/kschuurm/ZARR/SARAH3_bnds.zarr').load()
         sarah_bnds = sarah_bnds.isel(time=sarah_bnds.pixel_count != -1)   
-        timeindices = sarah_bnds.time
-        max_y = sarah_bnds.max_lat
-        max_x = sarah_bnds.max_lon
-        min_y = sarah_bnds.min_lat
-        min_x = sarah_bnds.min_lon
+        timeindices = sarah_bnds.time.copy(deep=True)
+        max_y = sarah_bnds.max_lat.copy(deep=True)
+        max_x = sarah_bnds.max_lon.copy(deep=True)
+        min_y = sarah_bnds.min_lat.copy(deep=True)
+        min_x = sarah_bnds.min_lon.copy(deep=True)
 
         timeindices = pickle_write(timeindices, '/scratch/snx3000/kschuurm/ZARR/timeindices.pkl')
         max_y = pickle_write(max_y, '/scratch/snx3000/kschuurm/ZARR/max_y.pkl')
@@ -140,7 +140,7 @@ class ImageDataset(Dataset):
             dim="time"
         )  # SOLARPOS should be the same dim as SEVIRI
         self.seviri = xarray.merge(
-            [self.seviri, self.solarpos], join="exact"
+            [self.seviri, self.solarpos], join  ="exact"
         )  # throws an error if time, lat, lon dim not the same
         self.seviri = xarray.merge(
             [self.seviri, self.dem], join="exact"
@@ -277,10 +277,16 @@ class SeviriDataset(Dataset):
         patches_per_image =100,
         dtype=torch.float16,
         seed=None,
+        rng=None
     ):
 
-        if seed is not None:
-            np.random.seed(seed)
+        self.seed = seed
+        if self.seed is not None:
+            self.rng = np.random.default_rng(seed=self.seed)
+        else:
+            assert rng is not None, 'Set a random number generator'
+            self.rng = rng # set random generator for all datasets in ddp
+
         self.x_features = x_features.copy()
         self.x_vars = x_vars.copy()
         self.y_vars = y_vars.copy()
@@ -289,57 +295,48 @@ class SeviriDataset(Dataset):
         self.patches_per_image = patches_per_image
         self.dtype=dtype
 
-        with benchmark('seviri'):
-            self.seviri = (
-                xarray.open_zarr(
-                    "/scratch/snx3000/kschuurm/ZARR/SEVIRI_new.zarr"
-                ).rename_dims({"x": "lon", "y": "lat"})
-                .rename_vars(
-                    {
-                        "x": "lon",
-                        "y": "lat",
-                    }
-                )
+        self.seviri = (
+            xarray.open_zarr(
+                "/scratch/snx3000/kschuurm/ZARR/SEVIRI_new.zarr"
+            ).rename_dims({"x": "lon", "y": "lat"})
+            .rename_vars(
+                {
+                    "x": "lon",
+                    "y": "lat",
+                }
             )
-            seviri_trans = {
-                "VIS006": "channel_1",
-                "VIS008": "channel_2",
-                "IR_016": "channel_3",
-                "IR_039": "channel_4",
-                "WV_062": "channel_5",
-                "WV_073": "channel_6",
-                "IR_087": "channel_7",
-                "IR_097": "channel_8",
-                "IR_108": "channel_9",
-                "IR_120": "channel_10",
-                "IR_134": "channel_11",}
-            
-            nms = self.seviri.channel.values
-            nms_trans = [seviri_trans[x] for x in nms]
-            self.seviri['channel'] = nms_trans
-            self.x_vars_available = [x for x in self.x_vars if x in nms_trans]
-
-        with benchmark('DEM'):
-            if os.path.exists('/scratch/snx3000/kschuurm/ZARR/DEM.pkl'):
-                with open('/scratch/snx3000/kschuurm/ZARR/DEM.pkl', 'rb') as pickle_file:
-                    self.dem = pickle.load(pickle_file)
-            else:
-                dem = xarray.open_zarr("/scratch/snx3000/kschuurm/ZARR/DEM.zarr").fillna(0).load()
-                with open('/scratch/snx3000/kschuurm/ZARR/DEM.pkl', 'wb') as pickle_file:
-                    pickle.dump(dem, pickle_file)
-                with open('/scratch/snx3000/kschuurm/ZARR/DEM.pkl', 'rb') as pickle_file:
-                    self.dem = pickle.load(pickle_file) 
-
-        with benchmark('SARAH3'):
-            self.sarah = xarray.open_zarr("/scratch/snx3000/kschuurm/ZARR/SARAH3.zarr")
+        )
+        seviri_trans = {
+            "VIS006": "channel_1",
+            "VIS008": "channel_2",
+            "IR_016": "channel_3",
+            "IR_039": "channel_4",
+            "WV_062": "channel_5",
+            "WV_073": "channel_6",
+            "IR_087": "channel_7",
+            "IR_097": "channel_8",
+            "IR_108": "channel_9",
+            "IR_120": "channel_10",
+            "IR_134": "channel_11",}
         
-        with benchmark('SOLARPOS'):
-            self.solarpos = xarray.open_zarr(
-                "/scratch/snx3000/kschuurm/ZARR/SOLARPOS.zarr"
-            ).drop_duplicates(
-                dim="time"
-            )  # SOLARPOS should be the same dim as SEVIRI
-        
+        nms = self.seviri.channel.values
+        nms_trans = [seviri_trans[x] for x in nms]
+        self.seviri['channel'] = nms_trans
+        self.x_vars_available = [x for x in self.x_vars if x in nms_trans]
+
+        if os.path.exists('/scratch/snx3000/kschuurm/ZARR/DEM.pkl'):
+            with open('/scratch/snx3000/kschuurm/ZARR/DEM.pkl', 'rb') as pickle_file:
+                self.dem = pickle.load(pickle_file)
+        else:
+            dem = xarray.open_zarr("/scratch/snx3000/kschuurm/ZARR/DEM.zarr").fillna(0).load()
+            with open('/scratch/snx3000/kschuurm/ZARR/DEM.pkl', 'wb') as pickle_file:
+                pickle.dump(dem, pickle_file)
+            with open('/scratch/snx3000/kschuurm/ZARR/DEM.pkl', 'rb') as pickle_file:
+                self.dem = pickle.load(pickle_file) 
+
+        self.sarah = xarray.open_zarr("/scratch/snx3000/kschuurm/ZARR/SARAH3_new.zarr")
+    
+        self.solarpos = xarray.open_zarr("/scratch/snx3000/kschuurm/ZARR/SOLARPOS_new.zarr") 
         
         sizes= self.seviri.sizes
         self.H = sizes['lat']
@@ -347,32 +344,32 @@ class SeviriDataset(Dataset):
 
         self.pad = int(np.floor(patch_size['x']/2))
 
-        with benchmark('sarah_bnds'):
-            timeindices_sarah, self.max_y, self.max_x, self.min_y, self.min_x  = get_pickled_sarah_bnds()
+        timeindices_sarah, self.max_y, self.max_x, self.min_y, self.min_x  = get_pickled_sarah_bnds()
 
         if timeindices is not None:
             self.timeindices = timeindices
         else:
             self.timeindices = timeindices_sarah
-        self.timeindices = np.array(list(set(self.timeindices.values).intersection(set(self.seviri.time.values))))
+        timeidxnotnan_seviri = np.load('/scratch/snx3000/kschuurm/ZARR/idxnotnan_seviri.npy')
+        self.timeindices = np.array(list(set(self.timeindices.values).intersection(set(timeidxnotnan_seviri))))
         
     def __len__(self):
         return len(self.timeindices)
     
     def __getitem__(self, i):
+        if self.seed is not None:
+            if i == 0: # reset seed at new validation epoch
+                self.rng = np.random.default_rng(seed=self.seed)
 
         timeidx= self.timeindices[i]
-
-        subset_seviri = self.seviri.sel(time = self.timeindices[i]).load()
         subset_sarah = self.sarah.sel(time = self.timeindices[i]).load()
-
+        subset_seviri = self.seviri.sel(time = self.timeindices[i]).load()
         min_x = self.min_x.sel(time=timeidx).values
         min_y = self.min_y.sel(time=timeidx).values
         max_x = self.max_x.sel(time=timeidx).values
         max_y = self.max_y.sel(time=timeidx).values
-
-        idx_x_samples = np.random.randint(min_x + self.pad, max_x-self.pad, size=self.patches_per_image)
-        idx_y_samples = np.random.randint(min_y + self.pad, max_y-self.pad, size=self.patches_per_image)
+        idx_x_samples = self.rng.integers(low=min_x + self.pad, high=max_x-self.pad, size=self.patches_per_image, dtype=np.uint16)
+        idx_y_samples = self.rng.integers(low=min_y + self.pad, high=max_y-self.pad, size=self.patches_per_image, dtype=np.uint16)
         idx_x_da = xarray.DataArray(idx_x_samples, dims=['z'])
         idx_y_da = xarray.DataArray(idx_y_samples, dims=['z'])
 
@@ -381,8 +378,7 @@ class SeviriDataset(Dataset):
         idx_x_patch_da = xarray.DataArray(idx_x_patch_samples, dims=['sample', 'lon'])
         idx_y_patch_da = xarray.DataArray(idx_y_patch_samples, dims=['sample', 'lat'])
         idx_x_patch_da, idx_y_patch_da = xarray.broadcast(idx_x_patch_da, idx_y_patch_da) # samples x lon x lat 
-
-        y = subset_sarah[self.y_vars if isinstance(self.y_vars, list) else [self.y_vars]] \
+        y = subset_sarah.sel(channel=self.y_vars if isinstance(self.y_vars, list) else [self.y_vars])\
                         .isel(lon=idx_x_da, lat=idx_y_da) 
         
         if 'dayofyear' in self.x_features:
@@ -393,17 +389,16 @@ class SeviriDataset(Dataset):
             x_lon = torch.tensor(y.lon.values, dtype=self.dtype).view(-1,1)
             x = torch.cat([x_dayofyear, x_lat, x_lon], dim=1)
         
-        y = torch.tensor(y.to_dataarray().values, dtype=self.dtype).permute(1,0)
-
+        y = torch.tensor(y.channel_data.values, dtype=self.dtype).permute(1,0)
         if 'SZA' in self.x_features:
             subset_solarpos = self.solarpos.sel(time = self.timeindices[i]).load()
-            x_solarpos = subset_solarpos[['SZA', 'AZI']] \
-                        .isel(lon=idx_x_da, lat=idx_y_da).to_dataarray().values
+            x_solarpos = subset_solarpos.channel_data.sel(channel=['SZA', 'AZI']) \
+                        .isel(lon=idx_x_da, lat=idx_y_da).values
             x_solarpos = torch.tensor(x_solarpos, dtype=self.dtype).permute(1,0) # BxC
             x = torch.cat([x, x_solarpos], dim=1)
 
         if 'DEM' in self.x_features:
-            x_DEM = self.dem.isel(lon=idx_x_da, lat=idx_y_da) \
+            x_DEM = self.dem.DEM.isel(lon=idx_x_da, lat=idx_y_da) \
                             .values
             x_DEM = torch.tensor(x_DEM, dtype=self.dtype).view(-1,1)
             x = torch.cat([x, x_DEM], dim=1)
@@ -413,6 +408,7 @@ class SeviriDataset(Dataset):
                             .values # CxBxHxW
         
         X = torch.tensor(X, dtype=self.dtype).permute(1,0,2,3) # BxCxHxW
+
 
         if 'DEM' in self.x_vars:
             D = self.dem['DEM'].isel(lat = idx_y_patch_da, lon=idx_x_patch_da).values # BxHxW
@@ -425,6 +421,16 @@ class SeviriDataset(Dataset):
 
         if self.target_transform:
             y = self.target_transform(y, self.y_vars)
+
+        if X.isnan().any():
+            print("nan in X")
+            print(X)
+        if x.isnan().any():
+            print("nan in x")
+            print(x)
+        if y.isnan().any():
+            print("nan in y")
+            print(y)
 
         return X, x, y
 
@@ -869,7 +875,6 @@ class SingleImageDataset_generator(Dataset):
 
 if __name__ == "__main__":
 
-    np.random.seed(0)
 
     from types import SimpleNamespace
 
@@ -902,26 +907,29 @@ if __name__ == "__main__":
     }
     config = SimpleNamespace(**config)
 
-    dataset = ImageDataset(
+
+    timeindex = pd.DatetimeIndex(pickle_read('/scratch/snx3000/kschuurm/ZARR/timeindices.pkl'))
+    timeindex = timeindex[(timeindex.hour >10) & (timeindex.hour <17)]
+    traintimeindex = timeindex[(timeindex.year == 2016)]
+    _, validtimeindex = valid_test_split(timeindex[(timeindex.year == 2017)])
+    
+
+    # print(validtimeindex)
+
+    dataset = SeviriDataset(
         x_vars=config.x_vars,
         y_vars=config.y_vars,
         x_features=config.x_features,
         patch_size=config.patch_size,
+        timeindices=validtimeindex,
         transform=config.transform,
         target_transform=config.target_transform,
-        random_sample=1,
-        timeindices=None,
-        shuffle=True,
-        batch_in_time=None,
     )
 
-    dataset1 = dataset.load_singleImageDataset(dataset.images[0]).result()
-    dataset2 = dataset.load_singleImageDataset_generator(dataset.images[0]).result()
-    i = 1   
-    X, x, y = dataset1[i]
-    X2,x2,y2 = dataset2[i]
-    
-    dl = DataLoader(dataset, batch_size=10000, shuffle=False)
-    print(X==X2)
-    print(x==x2)
-    print(y==y2)
+
+    dl = DataLoader(dataset, batch_size=None, shuffle=False, num_workers=4,)
+
+    for i, batch in enumerate(tqdm(dl)):
+        # print(batch)
+        if i> 100:
+            break

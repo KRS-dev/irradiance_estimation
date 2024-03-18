@@ -96,7 +96,7 @@ class ConvResNet_dropout(ConvResNet):
             nn.Dropout(0.2),
             nn.ReLU(),
             nn.Linear(256, 64),
-            # nn.Dropout(0.5),
+            nn.Dropout(0.2),
             nn.ReLU(),
             nn.Linear(64, output_channels),
         )
@@ -106,8 +106,38 @@ class ConvResNet_inputCdropout(ConvResNet):
         super().__init__(num_attr, input_channels, output_channels)
 
         self.conv1 = nn.Sequential( 
-            nn.Dropout2d(p=.3),  ## Drop outs the input_channels with 0.3 probability
+            nn.Dropout2d(p=.2),  ## Drop outs the input_channels with 0.2 probability
             nn.Conv2d(self.input_channels, 64, 3, padding="same"), 
             nn.BatchNorm2d(64), 
             nn.ReLU()
+        )
+
+class ConvResNet_batchnormMLP(ConvResNet):
+    def __init__(self, num_attr: int = 5, input_channels=1, output_channels=1):
+        super(ConvResNet_batchnormMLP, self).__init__(num_attr, input_channels, output_channels)
+
+        self.mlp = nn.Sequential(
+            nn.Linear(256 + num_attr, 256),
+            nn.BatchNorm1d(256),
+            nn.ReLU(),
+            nn.Linear(256, 64),
+            nn.BatchNorm1d(64),
+            nn.ReLU(),
+            nn.Linear(64, output_channels),
+        )
+    
+class ConvResNet_BNdropout(ConvResNet):
+    def __init__(self, num_attr: int = 5, input_channels=1, output_channels=1):
+        super(ConvResNet_BNdropout, self).__init__(num_attr, input_channels, output_channels)
+
+        self.mlp = nn.Sequential(
+            nn.Linear(256 + num_attr, 256),
+            nn.BatchNorm1d(256),
+            nn.Dropout(0.3),
+            nn.ReLU(),
+            nn.Linear(256, 64),
+            nn.BatchNorm1d(64),
+            nn.Dropout(0.3),
+            nn.ReLU(),
+            nn.Linear(64, output_channels),
         )

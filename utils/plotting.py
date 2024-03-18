@@ -1,7 +1,7 @@
+import scipy
 import xarray
-import random
 import matplotlib.pyplot as plt
-from matplotlib import colors
+from matplotlib import colors, cm
 import numpy as np
 import cartopy.crs as ccrs
 import cartopy.feature as cf
@@ -12,6 +12,9 @@ from cartopy.mpl.gridliner import (
     LongitudeLocator,
     LatitudeLocator,
 )
+from scipy.stats import binned_statistic_2d
+from torchmetrics import R2Score
+from sklearn.metrics import mean_absolute_percentage_error, r2_score, mean_absolute_error, mean_squared_error,root_mean_squared_error
 
 VMIN = 0
 VMAX = 1360
@@ -53,6 +56,18 @@ def scatter_hist(x, y, ax, ax_histx, ax_histy, cax, output_var="SIS"):
     # ax.set_aspect('equal')
     ax.plot([VMIN, VMAX], [VMIN, VMAX], "--")
 
+    slope, intercept, r_value, p_value, std_err = scipy.stats.linregress(x, y)
+
+    ax.plot([VMIN, VMAX], intercept + slope*np.array([VMIN, VMAX]), 'b-.')
+
+    metrics = {'R2 [-]':r2_score, 'MAD [W/m2]': mean_absolute_error, 'MAPE [-]':mean_absolute_percentage_error, 'RMSE [W/m2]' : root_mean_squared_error}
+    metrics = {key:val(x, y) for key, val in metrics.items()}
+    txt = [f'{key} = {np.round(float(val), 5)}' for key,val in metrics.items()]
+    txt = '\n'.join(txt)
+    ax.annotate(txt, 
+                xycoords='axes fraction',
+                xy=[.05, .85])
+
     ax.get_figure().colorbar(
         hist,
         ax=ax,
@@ -93,7 +108,7 @@ def prediction_error_plot(y, y_hat, output_var="SIS", title=None):
         y = y.cpu().numpy()
     if isinstance(y_hat, torch.Tensor):
         y_hat = y_hat.cpu().numpy()
-
+   
     
     # Start with a square Figure.
     fig = plt.figure(figsize=(8, 8))
@@ -152,7 +167,7 @@ def best_worst_plot(
         f'{"Best" if best else "Worst"} {output_var} prediction in {metric_name}'
     )
     for axi in ax.flatten():
-        axi.add_feature(cf.BORDERS)
+        axi.coastlines()
         axi.xaxis.set_major_locator(LongitudeLocator())
         axi.yaxis.set_major_locator(LatitudeLocator())
         axi.xaxis.set_major_formatter(LongitudeFormatter())
@@ -188,7 +203,7 @@ def best_worst_plot(
     )
 
     for axi in ax.flatten():
-        axi.add_feature(cf.BORDERS)
+        axi.coastlines()
         gl = axi.gridlines(
             crs=proj,
             linewidth=0.5,
@@ -223,8 +238,10 @@ def SZA_error_plot(SZA, SIS_error):
         sym='',
         notch=True,
         patch_artist=True, 
-        labels=sza_bins_labels)
+        labels=sza_bins_labels,
+        zorder=3)
     
+    ax.yaxis.grid(zorder=0)
     
     ax.set_title('Error distribution due to SZA')
     ax.set_ylabel('SIS error [w/m^2]')
@@ -246,9 +263,33 @@ def dayofyear_error_plot(dayofyear, SIS_error):
         notch=True,
         patch_artist=True,
         labels=dayofyear_bins_labels,
+        zorder=3,
         )
+    ax.yaxis.grid(zorder=0)
     ax.set_title('Error distribution due to seasonality')
     ax.set_ylabel('SIS error [w/m^2]')
     ax.set_xlabel('Week of the year')
 
     return fig, dayofyearboxplot
+
+def latlon_error_plot(lat, lon, SIS_error, latlon_step=0.5):
+    lat_bins =  np.arange(np.floor(torch.min(lat)), torch.max(lat) + latlon_step, latlon_step)
+    lon_bins = np.arange(np.floor(torch.min(lon)), torch.max(lon) + latlon_step, latlon_step)
+    mean_error, y_edge, x_edge, _ = binned_statistic_2d(lat, lon, SIS_error, bins = [lat_bins, lon_bins])
+
+    proj = ccrs.PlateCarree()
+    cmap = cm.bwr
+    divnorm=colors.TwoSlopeNorm(vcenter=0.)
+    fig, ax = plt.subplots(nrows=1, ncols=1, figsize=(8, 8), subplot_kw={'projection': proj})
+    pmesh = ax.pcolormesh(x_edge, y_edge, mean_error, shading='auto', transform=proj, cmap=cmap, norm=divnorm)
+    fig.colorbar(pmesh)
+    ax.set_title('Error distribution Location')
+    ax.set_ylabel('Longitude')
+    ax.set_xlabel('Latitude')
+    ax.xaxis.set_major_locator(LongitudeLocator())
+    ax.yaxis.set_major_locator(LatitudeLocator())
+    ax.xaxis.set_major_formatter(LongitudeFormatter())
+    ax.yaxis.set_major_formatter(LatitudeFormatter())
+    ax.add_feature(cf.BORDERS, zorder=3)
+
+    return fig, pmesh

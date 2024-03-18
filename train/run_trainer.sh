@@ -2,7 +2,7 @@
 #SBATCH --job-name="train Jiang test"
 #SBATCH --account="go41"
 #SBATCH --time=0-02:10:00
-#SBATCH --nodes=1
+#SBATCH --nodes=32
 #SBATCH --ntasks-per-node=1
 #SBATCH --cpus-per-task=24
 #SBATCH --partition=normal

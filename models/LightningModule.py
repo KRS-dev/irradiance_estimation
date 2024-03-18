@@ -1,17 +1,17 @@
 from typing import Any
-from matplotlib import pyplot as plt
+from matplotlib import colors, pyplot as plt
+import matplotlib
 from scipy.stats import binned_statistic_2d
 import numpy as np
 from torch.optim import Adam
 from torchmetrics import Metric, RelativeSquaredError, MeanSquaredError, R2Score, MeanAbsoluteError, MetricCollection, MeanMetric
-from torchmetrics.utilities import dim_zero_cat
 from torchmetrics.aggregation import MeanMetric
 import torch.nn as nn
 import torch.nn.functional as F
 import lightning.pytorch as L
 import torch
 from torch.optim.lr_scheduler import CosineAnnealingLR
-from utils.plotting import plot_patches, prediction_error_plot
+from utils.plotting import latlon_error_plot, plot_patches, prediction_error_plot
 import wandb
 from utils.plotting import SZA_error_plot, dayofyear_error_plot
 import cartopy.crs as ccrs
@@ -70,6 +70,7 @@ class LitEstimator(L.LightningModule):
         fig = plot_patches(y[ind].cpu(), y_hat[ind].cpu(), n_patches=4)
         fig.savefig("test_bestpatches.png")
         self.logger.log_image("Best Patches", images=[wandb.Image(fig)])
+        plt.close()
 
     def on_validation_epoch_start(self):
         self.val_loss_worst = 0
@@ -97,14 +98,14 @@ class LitEstimator(L.LightningModule):
 class LitEstimatorPoint(L.LightningModule):
     def __init__(self, learning_rate, model, config):
         super().__init__()
-        self.save_hyperparameters(ignore=["y","y_hat", "x_attr"])
+        self.save_hyperparameters(ignore=["y","y_hat", "x_attr", "model"])
         self.lr = learning_rate
         self.model = model
         self.transform = config.transform
         self.y_vars = config.y_vars
         self.x_features = config.x_features
         self.metric = MeanSquaredError()
-        self.other_metrics = MetricCollection([RelativeSquaredError(), MeanAbsoluteError(), MeanMetric(), R2Score()])
+        self.other_metrics = MetricCollection([RelativeSquaredError(), MeanAbsoluteError(), R2Score()])
         self.y = []
         self.y_hat =[]
         self.x_attr = []
@@ -140,19 +141,23 @@ class LitEstimatorPoint(L.LightningModule):
         y_hat = torch.cat(self.y_hat)
         x_attr = torch.cat(self.x_attr)
 
-        losses = self.other_metrics(y_hat, y)
-        self.log_dict(losses, logger=True, sync_dist=True)
 
         if self.transform:
             y_hat = self.transform.inverse(y_hat.cpu(), self.y_vars)
             y = self.transform.inverse(y.cpu(), self.y_vars)
             x_attr = self.transform.inverse(x_attr.cpu(), self.x_features)
         
+
         error = y_hat - y
         if len(self.y_vars)>1:
-            SIS_error = error[:, error.index('SIS')]
+            SIS_error = error[:, self.y_vars.index('SIS')]
+            SIS_idx = self.y_vars.index('SIS')
+            losses = self.other_metrics(y_hat[:, SIS_idx].flatten().cuda(), y[:, SIS_idx].flatten().cuda())
         else:
             SIS_error = error
+            losses = self.other_metrics(y_hat.flatten().cuda(), y.flatten().cuda())
+
+        self.log_dict(losses, logger=True, sync_dist=True)
 
         if 'SZA' in self.x_features and 'dayofyear' in self.x_features:
             SZA = x_attr[:, self.x_features.index('SZA')]
@@ -161,9 +166,8 @@ class LitEstimatorPoint(L.LightningModule):
             SZA_fig, _ = SZA_error_plot(SZA, SIS_error)
             dayofyear_fig, _ = dayofyear_error_plot(dayofyear, SIS_error)
 
-            self.logger.log_image(key="y_hat - y, distribution SZA and dayofyear", images=[SZA_fig, dayofyear_fig])
+            self.logger.log_image(key="y_hat - y, distribution SZA and dayofyear groundstations", images=[SZA_fig, dayofyear_fig])
        
-
         figs = []
         if len(self.y_vars) > 1:
             for i in range(y.shape[1]):
@@ -173,19 +177,17 @@ class LitEstimatorPoint(L.LightningModule):
             fig = prediction_error_plot(y.cpu(), y_hat.cpu(), self.y_vars[0])
             figs.append(fig)
         self.logger.log_image(key="Prediction error groundstations", images=figs)
+        plt.close()
     
     def predict_step(self, batch, batch_idx):
         X, x, y = batch
-        y_hat = self.forward(X.float(), x.float())
+        y_hat = self.forward(X, x)
         return y_hat, y, x
 
     def on_validation_epoch_end(self):
         y = torch.cat(self.y)
         y_hat = torch.cat(self.y_hat)
         x_attr = torch.cat(self.x_attr)
-
-        losses = self.other_metrics(y_hat, y)
-        self.log_dict(losses, logger=True, sync_dist=True)
 
         if self.transform:
             y_hat = self.transform.inverse(y_hat.cpu(), self.y_vars)
@@ -194,9 +196,14 @@ class LitEstimatorPoint(L.LightningModule):
 
         error = y_hat - y
         if len(self.y_vars)>1:
-            SIS_error = error[:, error.index('SIS')]
+            SIS_error = error[:, self.y_vars.index('SIS')]
+            SIS_idx = self.y_vars.index('SIS')
+            losses = self.other_metrics(y_hat[:, SIS_idx].double().cuda(), y[:, SIS_idx].double().cuda())
         else:
             SIS_error = error
+            losses = self.other_metrics(y_hat.flatten().double().cuda(), y.flatten().double().cuda())
+
+        self.log_dict(losses, logger=True, sync_dist=True)
         
         if 'SZA' in self.x_features and 'dayofyear' in self.x_features:
             SZA = x_attr[:, self.x_features.index('SZA')]
@@ -211,21 +218,9 @@ class LitEstimatorPoint(L.LightningModule):
             lat = x_attr[:, self.x_features.index('lat')]
             lon = x_attr[:, self.x_features.index('lon')]
 
-            step = 0.5
-            lat_bins =  np.arange(np.floor(torch.min(lat)), torch.max(lat) + step, step)
-            lon_bins = np.arange(np.floor(torch.min(lon)), torch.max(lon) + step, step)
-            mean_error, y_edge, x_edge, _ = binned_statistic_2d(lat, lon, SIS_error, bins = [lat_bins, lon_bins])
-
-            proj = ccrs.PlateCarree()
-            
-            fig, ax = plt.subplots(nrows=1, ncols=1, figsize=(8, 8), subplot_kw={'projection': proj})
-            ax.add_feature(cfeature.BORDERS, facecolor="green")
-            pmesh = ax.pcolormesh(x_edge, y_edge, mean_error.T, shading='auto', transform=proj)
-            fig.colorbar(pmesh)
-            ax.set_title('Error distribution Location')
-            ax.set_ylabel('Longitude')
-            ax.set_xlabel('Latitude')
+            fig, _ = latlon_error_plot(lat, lon, SIS_error)
             self.logger.log_image(key="Error Location", images=[fig])
+            plt.close()
 
         figs = []
         if len(self.y_vars) > 1:
@@ -248,7 +243,7 @@ class LitEstimatorPoint(L.LightningModule):
     
     def _shared_eval_step(self, batch, batch_idx):
         X, x, y = batch
-        y_hat = self.forward(X.float(), x.float())
+        y_hat = self.forward(X, x)
         loss = self.metric(y_hat, y)
         return loss, y_hat.squeeze(), y.squeeze()
 
@@ -258,8 +253,10 @@ class LitEstimatorPoint(L.LightningModule):
     #     return {"optimizer": optimizer, "lr_scheduler": scheduler}
     
     def configure_optimizers(self):
-        optimizer = torch.optim.AdamW(self.parameters(), lr=self.lr,
-                                      betas=(0.5, 0.9), weight_decay=1e-3)
+        optimizer = torch.optim.AdamW(self.parameters(), 
+                                      lr=self.lr,
+                                    #   betas=(0.5, 0.9), 
+                                      weight_decay=1e-2)
         reduce_lr = torch.optim.lr_scheduler.ReduceLROnPlateau(
             optimizer, patience=2, factor=0.25, verbose=True
         )
@@ -267,7 +264,7 @@ class LitEstimatorPoint(L.LightningModule):
             "optimizer": optimizer,
             "lr_scheduler": {
                 "scheduler": reduce_lr,
-                "monitor": "MeanAbsoluteError",
+                "monitor": "val_loss",
                 "frequency": 1,
             },
         }
