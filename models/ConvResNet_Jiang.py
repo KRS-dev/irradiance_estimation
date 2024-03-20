@@ -70,6 +70,8 @@ class ConvResNet(nn.Module):
             nn.Linear(64, output_channels),
         )
 
+        self.relu_rect = nn.ReLU()
+
     def forward(self, x, x_attrs):
 
         x = self.conv1(x)
@@ -84,7 +86,8 @@ class ConvResNet(nn.Module):
             [x, x_attrs]
         )  # batch_size x 256+6, Stack along the Channel dim
         x = self.mlp(x)
-
+        x = self.relu_rect(x + 1) - 1 ## Assuming minmax
+                
         return x
 
 class ConvResNet_dropout(ConvResNet):
