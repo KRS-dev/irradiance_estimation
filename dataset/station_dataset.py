@@ -1,4 +1,6 @@
 
+import os
+import pickle
 import torch
 import pandas as pd
 from torch.utils.data import DataLoader, Dataset
@@ -9,7 +11,9 @@ from tqdm import tqdm
 from utils.etc import benchmark
 
 class GroundstationDataset(Dataset):
-    def __init__(self, station_name, y_vars, x_vars, x_features, patch_size=15, time_window=12, transform=None, target_transform=None):
+    def __init__(self, station_name, y_vars, x_vars, x_features, 
+                 patch_size=15, time_window=12, transform=None, target_transform=None,
+                 sarah_idx_only=False):
         
         self.x_vars = x_vars
         self.x_features = x_features
@@ -77,6 +81,13 @@ class GroundstationDataset(Dataset):
 
         # select available time slices
         self.timeidxnotnan = np.load(f'/scratch/snx3000/kschuurm/ZARR/{station_name}/timeidxnotnan.npy')
+
+        if sarah_idx_only:
+            sarah = xarray.open_zarr('/scratch/snx3000/kschuurm/ZARR/SARAH3_new.zarr')
+            sarah_time = set(self.timeidxnotnan).intersection(set(sarah.time.values))
+            sarah_time = np.sort(np.array(list(sarah_time)))
+            self.timeidxnotnan = sarah_time
+
         self.rolling_station = self.rolling_station.sel(time=self.timeidxnotnan)
         self.station_seviri = self.station_seviri.sel(time=self.timeidxnotnan)
 
@@ -122,16 +133,43 @@ class GroundstationDataset(Dataset):
 
 
 class GroundstationDataset2(Dataset):
-    def __init__(self, zarr_store, y_vars, x_vars, x_features, patch_size=15, transform=None, target_transform=None):
+    def __init__(self, zarr_store, y_vars, x_vars, x_features, 
+                 patch_size=15, transform=None, target_transform=None, 
+                 subset_year=None, binned=False, bin_size=50, sarah_idx_only=False):
+        
         
         self.x_vars = x_vars
         self.x_features = x_features
         self.y_vars = y_vars
+
         self.data = xarray.open_zarr(zarr_store)
 
         self.data = self.data.rename_vars({
                 'GHI':'SIS',
-            }).isel(time=(self.data.SZA < np.pi/2).compute())
+            }).isel(time=(self.data.SZA < np.pi/2).compute()).dropna('time')
+        
+        if subset_year:
+            self.data = self.data.sel(time=self.data.time.dt.year == subset_year)
+
+        if sarah_idx_only:
+            sarah = xarray.open_zarr('/scratch/snx3000/kschuurm/ZARR/SARAH3_new.zarr')
+            sarah_time = set(self.data.time.values).intersection(set(sarah.time.values))
+            sarah_time = np.sort(np.array(list(sarah_time)))
+            self.data = self.data.sel(time=sarah_time)
+        
+        if binned:
+            with benchmark('binned'):
+                SIS_max = self.data.SIS.max().values
+                bins = np.arange(0, SIS_max + bin_size if SIS_max<1300 else 1300 + bin_size, bin_size)
+                digitized = np.digitize(self.data.SIS, bins)
+                size_bins = [np.sum(digitized == i) for i in range(1, len(bins))]
+                samples_per_bin = np.quantile(size_bins, .25)
+                idxs = []
+                for i in range(1, len(bins)):
+                    sample_size =np.min([int(samples_per_bin), size_bins[i-1]])
+                    idxs.append(np.random.choice(np.argwhere(digitized == i).squeeze(), sample_size, replace=False))
+                idxs = np.concatenate(idxs)
+                self.data = self.data.isel(time=np.sort(idxs))
         
         seviri_trans = {
             "VIS006": "channel_1",
@@ -150,7 +188,7 @@ class GroundstationDataset2(Dataset):
         nms_trans = [seviri_trans[x] for x in nms]
         self.data['channel'] = nms_trans
 
-        self.dem = xarray.open_zarr('/home/kr/Documents/Solar_Power_Forecasting/03_ground_stations/ZARR/DEM.zarr') \
+        self.dem = xarray.open_zarr('/scratch/snx3000/kschuurm/ZARR/DEM.zarr') \
                 .sel(lat=self.data.lat, lon=self.data.lon)
 
         xlen = len(self.data.lat)
@@ -176,7 +214,6 @@ class GroundstationDataset2(Dataset):
             # self.data = self.data.assign({'lat':self.data.lat_station,
             #                         'lon':self.data.lon_station,
             #                         'DEM':self.data.altitude_station})
-
 
         x_vars = [v for v in self.x_vars if v in self.data.channel.values]
         self.X = torch.Tensor(self.data.channel_data.sel(channel=x_vars).values) # CxTxHxW
@@ -209,14 +246,13 @@ class GroundstationDataset2(Dataset):
         X = self.X[i]
         x = self.x[i]
         y = self.y[i]
-        return X, x, y
 
-    def get_xarray(self, i):
-        timeidx = self.timeidxnotnan[i]
-        X_xr = self.station_seviri.sel(time=timeidx)[self.x_vars].to_dataarray(dim="channels")
-        x_xr = self.station.sel(time=timeidx)[self.x_features].to_dataarray(dim='channels')
-        y_xr = self.station.sel(time=timeidx)[self.y_vars].to_dataarray(dim='channels')
-        return X_xr, x_xr, y_xr
+        
+        return X, x, y
+    
+
+
+
 
 
 if __name__ == '__main__':

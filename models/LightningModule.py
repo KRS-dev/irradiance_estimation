@@ -96,7 +96,7 @@ class LitEstimator(L.LightningModule):
 
 
 class LitEstimatorPoint(L.LightningModule):
-    def __init__(self, learning_rate, model, config):
+    def __init__(self, learning_rate, model, config, metric = MeanSquaredError()):
         super().__init__()
         self.save_hyperparameters(ignore=["y","y_hat", "x_attr", "model"])
         self.lr = learning_rate
@@ -104,7 +104,7 @@ class LitEstimatorPoint(L.LightningModule):
         self.transform = config.transform
         self.y_vars = config.y_vars
         self.x_features = config.x_features
-        self.metric = MeanSquaredError()
+        self.metric = metric
         self.other_metrics = MetricCollection([RelativeSquaredError(), MeanAbsoluteError(), R2Score()])
         self.y = []
         self.y_hat =[]
@@ -258,7 +258,7 @@ class LitEstimatorPoint(L.LightningModule):
                                     #   betas=(0.5, 0.9), 
                                       weight_decay=1e-2)
         reduce_lr = torch.optim.lr_scheduler.ReduceLROnPlateau(
-            optimizer, patience=2, factor=0.25, verbose=True
+            optimizer, patience=1, factor=0.1, verbose=True
         )
         return {
             "optimizer": optimizer,

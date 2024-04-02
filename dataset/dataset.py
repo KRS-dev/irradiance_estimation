@@ -135,8 +135,8 @@ class ImageDataset(Dataset):
 
         self.sarah = xarray.open_zarr("/scratch/snx3000/kschuurm/ZARR/SARAH3_new.zarr").channel_data.to_dataset(dim='channel') 
         self.solarpos = xarray.open_zarr(
-            "/scratch/snx3000/kschuurm/ZARR/SOLARPOS.zarr"
-        ).drop_duplicates(
+            "/scratch/snx3000/kschuurm/ZARR/SOLARPOS_new.zarr"
+        ).channel_data.to_dataset(dim='channel') .drop_duplicates(
             dim="time"
         )  # SOLARPOS should be the same dim as SEVIRI
         self.seviri = xarray.merge(

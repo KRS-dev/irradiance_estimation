@@ -18,6 +18,6 @@ export NCCL_DEBUG=INFO
 export PYTHONFAULTHANDLER=1
 
 module load daint-gpu 
-source $SCRATCH/lightning/bin/activate
+source $SCRATCH/lightning-env/bin/activate
 
 srun -ul python train.py

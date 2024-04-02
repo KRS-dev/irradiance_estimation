@@ -22,45 +22,6 @@ from tqdm import tqdm
 # from pytorch_lightning.pytorch.callbacks import DeviceStatsMonitor
 from types import SimpleNamespace
 
-config = {
-    "batch_size": 1024,
-    "patch_size": {
-        "x": 3,
-        "y": 3,
-        "stride_x": 1,
-        "stride_y": 1,
-    },
-    "x_vars": [
-        "channel_1",
-        "channel_2",
-        "channel_3",
-        "channel_4",
-        "channel_5",
-        "channel_6",
-        "channel_7",
-        "channel_8",
-        "channel_9",
-        "channel_10",
-        "channel_11",
-        "DEM",
-    ],
-    "y_vars": ["SIS",],
-    "x_features": ["dayofyear", "lat", "lon", 'SZA', "AZI",],
-    "transform": ZeroMinMax(),
-    "target_transform": ZeroMinMax(),
-    'max_epochs': 50,
-    # Compute related
-    'num_workers': 24,
-    'ACCELERATOR': "gpu",
-    'DEVICES': -1,
-    'NUM_NODES': 32,
-    'STRATEGY': "ddp",
-    'PRECISION': "32",
-    'EarlyStopping': {'patience':5},
-    'ModelCheckpoint':{'every_n_epochs':1, 'save_top_k':3}
-}
-config = SimpleNamespace(**config)
-
 def get_dataloaders(config):
     
     timeindex = pd.DatetimeIndex(pickle_read('/scratch/snx3000/kschuurm/ZARR/timeindices.pkl'))
@@ -115,6 +76,46 @@ def get_testdataloader(config):
 
 
 def main():
+
+    config = {
+        "batch_size": 2048,
+        "patch_size": {
+            "x": 15,
+            "y": 15,
+            "stride_x": 1,
+            "stride_y": 1,
+        },
+        "x_vars": [
+            "channel_1",
+            "channel_2",
+            "channel_3",
+            "channel_4",
+            "channel_5",
+            "channel_6",
+            "channel_7",
+            "channel_8",
+            "channel_9",
+            "channel_10",
+            "channel_11",
+            "DEM",
+        ],
+        "y_vars": ["SIS",],
+        "x_features": ["dayofyear", "lat", "lon", 'SZA', "AZI",],
+        "transform": ZeroMinMax(),
+        "target_transform": ZeroMinMax(),
+        'max_epochs': 50,
+        # Compute related
+        'num_workers': 24,
+        'ACCELERATOR': "gpu",
+        'DEVICES': -1,
+        'NUM_NODES': 32,
+        'STRATEGY': "ddp",
+        'PRECISION': "32",
+        'EarlyStopping': {'patience':1},
+        'ModelCheckpoint':{'every_n_epochs':1, 'save_top_k':1}
+    }
+    config = SimpleNamespace(**config)
+
        
     # model = ConvResNet_BNdropout(
     #     num_attr=len(config.x_features),
@@ -125,7 +126,7 @@ def main():
         patch_size=(config.patch_size['x'], config.patch_size['y']),
         input_channels=len(config.x_vars),
         input_features=len(config.x_features),
-        channel_size=256,
+        channel_size=512,
         output_channels=len(config.y_vars)
     )
     config.model = type(model).__name__
@@ -156,10 +157,7 @@ def main():
         max_time="00:02:00:00"
     )
 
-    testtrainer = Trainer(
-        logger=wandb_logger,
-        accelerator=config.ACCELERATOR,
-        devices=1, num_nodes=1)
+    
 
     estimator = LitEstimatorPoint(
         model=model,
@@ -172,12 +170,18 @@ def main():
     trainer.fit(
         estimator, train_dataloaders=train_dataloader, val_dataloaders=val_dataloader
     )
-
+    testtrainer = Trainer(
+            logger=wandb_logger,
+            accelerator=config.ACCELERATOR,
+            devices=1, num_nodes=1,
+            )
     test_dataloaders = get_testdataloader(config)
     try:
         for dl in test_dataloaders.values():
             testtrainer.test(
-                estimator, dataloaders=dl
+                estimator,
+                ckpt_path='best',
+                dataloaders=dl
             )
     except Exception as e:
         print('failed test')

@@ -12,9 +12,10 @@ from cartopy.mpl.gridliner import (
     LongitudeLocator,
     LatitudeLocator,
 )
+from adjustText import adjust_text
 from scipy.stats import binned_statistic_2d
 from torchmetrics import R2Score
-from sklearn.metrics import mean_absolute_percentage_error, r2_score, mean_absolute_error, mean_squared_error,root_mean_squared_error
+from sklearn.metrics import mean_absolute_percentage_error, r2_score, mean_absolute_error, mean_squared_error, root_mean_squared_error
 
 VMIN = 0
 VMAX = 1360
@@ -58,15 +59,19 @@ def scatter_hist(x, y, ax, ax_histx, ax_histy, cax, output_var="SIS"):
 
     slope, intercept, r_value, p_value, std_err = scipy.stats.linregress(x, y)
 
+    def bias_metric(x, y):
+        return np.mean(y - x)
+
     ax.plot([VMIN, VMAX], intercept + slope*np.array([VMIN, VMAX]), 'b-.')
 
-    metrics = {'R2 [-]':r2_score, 'MAD [W/m2]': mean_absolute_error, 'MAPE [-]':mean_absolute_percentage_error, 'RMSE [W/m2]' : root_mean_squared_error}
+
+    metrics = {'R2 [-]':r2_score, 'Bias [W/m2]': bias_metric, 'MAE [W/m2]': mean_absolute_error, 'MAPE [-]':mean_absolute_percentage_error, 'RMSE [W/m2]' : root_mean_squared_error}
     metrics = {key:val(x, y) for key, val in metrics.items()}
-    txt = [f'{key} = {np.round(float(val), 5)}' for key,val in metrics.items()]
+    txt = [f'{key} = {np.round(float(val), 2)}' for key,val in metrics.items()]
     txt = '\n'.join(txt)
     ax.annotate(txt, 
                 xycoords='axes fraction',
-                xy=[.05, .85])
+                xy=[.05, .75])
 
     ax.get_figure().colorbar(
         hist,
@@ -290,6 +295,70 @@ def latlon_error_plot(lat, lon, SIS_error, latlon_step=0.5):
     ax.yaxis.set_major_locator(LatitudeLocator())
     ax.xaxis.set_major_formatter(LongitudeFormatter())
     ax.yaxis.set_major_formatter(LatitudeFormatter())
+    ax.add_feature(cf.COASTLINE, zorder=3)
     ax.add_feature(cf.BORDERS, zorder=3)
 
     return fig, pmesh
+
+def plot_station_locations(lats, lons, names):
+    fig, ax = plt.subplots(subplot_kw={'projection': ccrs.PlateCarree()})
+    ax.coastlines()
+    ax.gridlines(draw_labels=True)
+    ax.stock_img()
+    ax.set_extent([min(lons) -1, max(lons)+1, min(lats)-1, max(lats)+1], crs=ccrs.PlateCarree())
+    for i in range(len(lats)):
+        ax.plot(lons[i], lats[i], 'o', markersize=10, transform=ccrs.PlateCarree(), label=names[i])
+    return fig, ax
+
+
+def plot_station_scatter(lats, lons, metrics, station_nms, 
+                         metric_nm, vmin=None, vmax=None, 
+                         plot_text=True, cmap='plasma', norm=None,
+                         title=None):
+
+    # Create a Cartopy projection
+    proj = ccrs.PlateCarree()
+
+    # Create a figure and axis
+    fig, ax = plt.subplots(figsize=(7, 6), subplot_kw={'projection': proj})
+
+    # Add map features
+    ax.add_feature(cf.LAND)
+    ax.add_feature(cf.OCEAN)
+    ax.add_feature(cf.COASTLINE)
+    ax.add_feature(cf.BORDERS, linestyle=':')
+    ax.add_feature(cf.LAKES, alpha=0.5)
+    # ax.add_feature(cf.RIVERS)
+
+    # Plot the RMS errors with latlon
+    sc = ax.scatter(lons, lats, s=200, c=metrics, norm=norm,
+                    cmap=cmap, vmin=vmin, vmax=vmax, transform=proj, zorder=3)
+
+    # plot texts
+    if plot_text:
+        text = [f'{round(val)}' for nm, val in zip(station_nms, metrics)]
+
+        texts = []
+        for i in range(len(text)):
+            texts.append(ax.text(lons[i], lats[i], text[i]))
+        
+        adjust_text(
+            texts,
+            x=lons,
+            y=lats,
+            force_text=(.4, .4),
+            expand=(2.5, 1.5),
+            arrowprops=dict(arrowstyle='->', color='k', lw=0.5),)
+
+    # Add a colorbar
+    cbar = fig.colorbar(sc, ax=ax, orientation='vertical', label=metric_nm)
+
+    # Set the title and labels
+    if title is not None:
+        ax.set_title(title)
+    else:
+        ax.set_title(f'{metric_nm} over Europe')
+    ax.set_xlabel('Longitude')
+    ax.set_ylabel('Latitude')
+    
+    return fig

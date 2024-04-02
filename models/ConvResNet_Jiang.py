@@ -86,7 +86,7 @@ class ConvResNet(nn.Module):
             [x, x_attrs]
         )  # batch_size x 256+6, Stack along the Channel dim
         x = self.mlp(x)
-        x = self.relu_rect(x + 1) - 1 ## Assuming minmax
+        x = self.relu_rect(x + 1) - 1 ## Assuming minmax scaling -1 to 1 where going lower than -1 is unphysical
                 
         return x
 
