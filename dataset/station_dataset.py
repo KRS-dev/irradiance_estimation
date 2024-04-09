@@ -13,7 +13,7 @@ from utils.etc import benchmark
 class GroundstationDataset(Dataset):
     def __init__(self, station_name, y_vars, x_vars, x_features, 
                  patch_size=15, time_window=12, transform=None, target_transform=None,
-                 sarah_idx_only=False):
+                 sarah_idx_only=False, SZA_max=85):
         
         self.x_vars = x_vars
         self.x_features = x_features
@@ -86,7 +86,11 @@ class GroundstationDataset(Dataset):
             sarah = xarray.open_zarr('/scratch/snx3000/kschuurm/ZARR/SARAH3_new.zarr')
             sarah_time = set(self.timeidxnotnan).intersection(set(sarah.time.values))
             sarah_time = np.sort(np.array(list(sarah_time)))
+            sarah.close()
             self.timeidxnotnan = sarah_time
+        
+        if SZA_max:
+            self.station = self.station.where(self.station.SZA < SZA_max*np.pi/180, drop=True)
 
         self.rolling_station = self.rolling_station.sel(time=self.timeidxnotnan)
         self.station_seviri = self.station_seviri.sel(time=self.timeidxnotnan)
@@ -135,7 +139,8 @@ class GroundstationDataset(Dataset):
 class GroundstationDataset2(Dataset):
     def __init__(self, zarr_store, y_vars, x_vars, x_features, 
                  patch_size=15, transform=None, target_transform=None, 
-                 subset_year=None, binned=False, bin_size=50, sarah_idx_only=False):
+                 subset_year=None, binned=False, bin_size=50, sarah_idx_only=False,
+                 SZA_max=85):
         
         
         self.x_vars = x_vars
@@ -146,7 +151,7 @@ class GroundstationDataset2(Dataset):
 
         self.data = self.data.rename_vars({
                 'GHI':'SIS',
-            }).isel(time=(self.data.SZA < np.pi/2).compute()).dropna('time')
+            })
         
         if subset_year:
             self.data = self.data.sel(time=self.data.time.dt.year == subset_year)
@@ -155,7 +160,11 @@ class GroundstationDataset2(Dataset):
             sarah = xarray.open_zarr('/scratch/snx3000/kschuurm/ZARR/SARAH3_new.zarr')
             sarah_time = set(self.data.time.values).intersection(set(sarah.time.values))
             sarah_time = np.sort(np.array(list(sarah_time)))
+            sarah.close()
             self.data = self.data.sel(time=sarah_time)
+
+        if SZA_max:
+            self.data = self.data.where((self.data.SZA < SZA_max*np.pi/180).compute(), drop=True)
         
         if binned:
             with benchmark('binned'):
@@ -204,10 +213,12 @@ class GroundstationDataset2(Dataset):
             self.data['dayofyear'] = self.data.time.dt.dayofyear
 
         if 'lat' in x_features:
-            self.data = self.data.rename_vars({
+            self.data = self.data.rename_dims({
                 'lat':'lat_',
                 'lon':'lon_'
             }).rename_vars({
+                'lat':'lat_',
+                'lon':'lon_',
                 'lat_station':'lat',
                 'lon_station':'lon',
             })

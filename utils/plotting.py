@@ -65,9 +65,9 @@ def scatter_hist(x, y, ax, ax_histx, ax_histy, cax, output_var="SIS"):
     ax.plot([VMIN, VMAX], intercept + slope*np.array([VMIN, VMAX]), 'b-.')
 
 
-    metrics = {'R2 [-]':r2_score, 'Bias [W/m2]': bias_metric, 'MAE [W/m2]': mean_absolute_error, 'MAPE [-]':mean_absolute_percentage_error, 'RMSE [W/m2]' : root_mean_squared_error}
+    metrics = {'R2 [-]':r2_score, 'Bias [W/m2]': bias_metric, 'MAE [W/m2]': mean_absolute_error, 'RMSE [W/m2]' : root_mean_squared_error}
     metrics = {key:val(x, y) for key, val in metrics.items()}
-    txt = [f'{key} = {np.round(float(val), 2)}' for key,val in metrics.items()]
+    txt = [f'{key} = {np.round(float(val), 3)}' for key,val in metrics.items()]
     txt = '\n'.join(txt)
     ax.annotate(txt, 
                 xycoords='axes fraction',
@@ -78,7 +78,7 @@ def scatter_hist(x, y, ax, ax_histx, ax_histy, cax, output_var="SIS"):
         ax=ax,
         cax=cax,
     )
-    cax.set_ylabel("N")
+    cax.set_ylabel("N, Total={0}".format(len(x)))
     cax.yaxis.set_label_position("left")
     cax.tick_params(
         axis="both",

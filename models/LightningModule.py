@@ -9,6 +9,7 @@ from torchmetrics.aggregation import MeanMetric
 import torch.nn as nn
 import torch.nn.functional as F
 import lightning.pytorch as L
+from lightning.pytorch.loggers import WandbLogger
 import torch
 from torch.optim.lr_scheduler import CosineAnnealingLR
 from utils.plotting import latlon_error_plot, plot_patches, prediction_error_plot
@@ -95,8 +96,9 @@ class LitEstimator(L.LightningModule):
 
 
 
+
 class LitEstimatorPoint(L.LightningModule):
-    def __init__(self, learning_rate, model, config, metric = MeanSquaredError()):
+    def __init__(self, learning_rate, model, config, metric = MeanSquaredError(), parameter_loss=False, alpha=0.1):
         super().__init__()
         self.save_hyperparameters(ignore=["y","y_hat", "x_attr", "model"])
         self.lr = learning_rate
@@ -105,17 +107,35 @@ class LitEstimatorPoint(L.LightningModule):
         self.y_vars = config.y_vars
         self.x_features = config.x_features
         self.metric = metric
-        self.other_metrics = MetricCollection([RelativeSquaredError(), MeanAbsoluteError(), R2Score()])
+        self.other_metrics = MetricCollection([MeanSquaredError(), MeanAbsoluteError(), R2Score()])
         self.y = []
         self.y_hat =[]
         self.x_attr = []
 
-    def training_step(self, batch, batch_idx):
+        self.parameter_loss = parameter_loss
+        self.parameter_metric = MeanSquaredError().to(self.device)
+        self.alpha = alpha
+
+    def set_reference_parameters(self, reference_parameters):
+        self.reference_parameters = [par.to(self.device)for par in reference_parameters]
+
+    def training_step(self, batch, batch_idx, dataloader_idx=0):
         loss, y_hat, y = self._shared_eval_step(batch, batch_idx)
+
+        if self.parameter_loss:
+            if self.reference_parameters is None:
+                raise ValueError("No reference state dict provided to create parameter loss")
+            par_loss = 0
+            for par1, par2 in zip(self.model.parameters(), self.reference_parameters):
+                if par1.requires_grad:
+                    par_loss += self.alpha*self.parameter_metric(par1.to(self.device), par2.to(self.device))
+            loss += par_loss
+            self.log('par_loss', par_loss, logger=True, prog_bar=True)
+
         self.log("loss", loss, logger=True, on_epoch=True, prog_bar=True)
         return loss
 
-    def validation_step(self, batch, batch_idx):
+    def validation_step(self, batch, batch_idx, dataloader_idx=0):
         loss, y_hat, y = self._shared_eval_step(batch, batch_idx)
         self.log("val_loss", loss, on_epoch=True, logger=True, prog_bar=True)
         self.y.append(y)
@@ -165,8 +185,8 @@ class LitEstimatorPoint(L.LightningModule):
 
             SZA_fig, _ = SZA_error_plot(SZA, SIS_error)
             dayofyear_fig, _ = dayofyear_error_plot(dayofyear, SIS_error)
-
-            self.logger.log_image(key="y_hat - y, distribution SZA and dayofyear groundstations", images=[SZA_fig, dayofyear_fig])
+            if isinstance(self.logger, WandbLogger):
+                self.logger.log_image(key="y_hat - y, distribution SZA and dayofyear groundstations", images=[SZA_fig, dayofyear_fig])
        
         figs = []
         if len(self.y_vars) > 1:
@@ -176,7 +196,9 @@ class LitEstimatorPoint(L.LightningModule):
         else:
             fig = prediction_error_plot(y.cpu(), y_hat.cpu(), self.y_vars[0])
             figs.append(fig)
-        self.logger.log_image(key="Prediction error groundstations", images=figs)
+        
+        if isinstance(self.logger, WandbLogger):
+            self.logger.log_image(key="Prediction error groundstations", images=figs)
         plt.close()
     
     def predict_step(self, batch, batch_idx):
@@ -211,7 +233,8 @@ class LitEstimatorPoint(L.LightningModule):
 
             SZA_fig, _ = SZA_error_plot(SZA, SIS_error)
             dayofyear_fig, _ = dayofyear_error_plot(dayofyear, SIS_error)
-            self.logger.log_image(key="y_hat - y, distribution SZA and dayofyear", images=[SZA_fig, dayofyear_fig])
+            if isinstance(self.logger, WandbLogger):
+                self.logger.log_image(key="y_hat - y, distribution SZA and dayofyear", images=[SZA_fig, dayofyear_fig])
 
         
         if 'lat' in self.x_features and 'lon' in self.x_features:
@@ -219,7 +242,8 @@ class LitEstimatorPoint(L.LightningModule):
             lon = x_attr[:, self.x_features.index('lon')]
 
             fig, _ = latlon_error_plot(lat, lon, SIS_error)
-            self.logger.log_image(key="Error Location", images=[fig])
+            if isinstance(self.logger, WandbLogger):
+                self.logger.log_image(key="Error Location", images=[fig])
             plt.close()
 
         figs = []
@@ -231,7 +255,8 @@ class LitEstimatorPoint(L.LightningModule):
             fig = prediction_error_plot(y.cpu(), y_hat.cpu(), self.y_vars[0])
             figs.append(fig)
 
-        self.logger.log_image(key="Prediction error SARAH3", images=figs)
+        if isinstance(self.logger, WandbLogger):
+            self.logger.log_image(key="Prediction error SARAH3", images=figs)
     
     def on_validation_epoch_start(self):
         self.y = []

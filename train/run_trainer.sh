@@ -1,5 +1,5 @@
 #!/bin/bash -l
-#SBATCH --job-name="train Jiang test"
+#SBATCH --job-name="train ConvResNet"
 #SBATCH --account="go41"
 #SBATCH --time=0-02:10:00
 #SBATCH --nodes=32

@@ -282,9 +282,8 @@ class SeviriDataset(Dataset):
 
         self.seed = seed
         if self.seed is not None:
-            self.rng = np.random.default_rng(seed=self.seed)
+            self.rng = torch.Generator().manual_seed(self.seed)
         else:
-            assert rng is not None, 'Set a random number generator'
             self.rng = rng # set random generator for all datasets in ddp
 
         self.x_features = x_features.copy()
@@ -353,23 +352,55 @@ class SeviriDataset(Dataset):
         timeidxnotnan_seviri = np.load('/scratch/snx3000/kschuurm/ZARR/idxnotnan_seviri.npy')
         self.timeindices = np.array(list(set(self.timeindices.values).intersection(set(timeidxnotnan_seviri))))
         
+        
+        if self.seed is not None:
+            with benchmark('sampler setup'):
+                self.idx_x_sampler = []
+                self.idx_y_sampler = []
+                
+                for timeidx in self.timeindices:
+                    min_x = int(self.min_x.sel(time=timeidx).values)
+                    min_y = int(self.min_y.sel(time=timeidx).values)
+                    max_x = int(self.max_x.sel(time=timeidx).values)
+                    max_y = int(self.max_y.sel(time=timeidx).values)
+                    idx_x_samples = torch.randint(min_x + self.pad, 
+                                                max_x-self.pad, 
+                                                (self.patches_per_image,), 
+                                                dtype=torch.int32, 
+                                                generator=self.rng)
+                    idx_y_samples = torch.randint(min_y + self.pad, 
+                                                max_y-self.pad, 
+                                                (self.patches_per_image,), 
+                                                dtype=torch.int32, 
+                                                generator=self.rng)
+                    self.idx_x_sampler.append(idx_x_samples)
+                    self.idx_y_sampler.append(idx_y_samples)
+
     def __len__(self):
         return len(self.timeindices)
     
     def __getitem__(self, i):
-        if self.seed is not None:
-            if i == 0: # reset seed at new validation epoch
-                self.rng = np.random.default_rng(seed=self.seed)
-
         timeidx= self.timeindices[i]
         subset_sarah = self.sarah.sel(time = self.timeindices[i]).load()
         subset_seviri = self.seviri.sel(time = self.timeindices[i]).load()
-        min_x = self.min_x.sel(time=timeidx).values
-        min_y = self.min_y.sel(time=timeidx).values
-        max_x = self.max_x.sel(time=timeidx).values
-        max_y = self.max_y.sel(time=timeidx).values
-        idx_x_samples = self.rng.integers(low=min_x + self.pad, high=max_x-self.pad, size=self.patches_per_image, dtype=np.uint16)
-        idx_y_samples = self.rng.integers(low=min_y + self.pad, high=max_y-self.pad, size=self.patches_per_image, dtype=np.uint16)
+
+        if self.seed is not None:
+            idx_x_samples = self.idx_x_sampler[i]
+            idx_y_samples = self.idx_y_sampler[i]
+        else:
+            min_x = int(self.min_x.sel(time=timeidx).values)
+            min_y = int(self.min_y.sel(time=timeidx).values)
+            max_x = int(self.max_x.sel(time=timeidx).values)
+            max_y = int(self.max_y.sel(time=timeidx).values)
+            idx_x_samples = torch.randint(min_x + self.pad, 
+                                        max_x-self.pad, 
+                                        (self.patches_per_image,), 
+                                        dtype=torch.int32,)
+            idx_y_samples = torch.randint(min_y + self.pad, 
+                                        max_y-self.pad, 
+                                        (self.patches_per_image,), 
+                                        dtype=torch.int32,)
+        
         idx_x_da = xarray.DataArray(idx_x_samples, dims=['z'])
         idx_y_da = xarray.DataArray(idx_y_samples, dims=['z'])
 
