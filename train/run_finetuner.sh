@@ -1,8 +1,8 @@
 #!/bin/bash -l
 #SBATCH --job-name="finetune ConvResNet"
 #SBATCH --account="go41"
-#SBATCH --time=0-02:40:00
-#SBATCH --nodes=2
+#SBATCH --time=0-03:30:00
+#SBATCH --nodes=1
 #SBATCH --ntasks-per-node=1
 #SBATCH --cpus-per-task=24
 #SBATCH --partition=normal

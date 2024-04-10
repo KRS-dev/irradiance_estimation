@@ -1,3 +1,4 @@
+from glob import glob
 import itertools
 from multiprocessing import Pool
 import os
@@ -80,13 +81,13 @@ def main():
         'num_workers': 24,
         'ACCELERATOR': "gpu",
         'DEVICES': -1,
-        'NUM_NODES': 2,
+        'NUM_NODES': 1,
         'STRATEGY': "ddp",
         'PRECISION': "32",
         'EarlyStopping': {'patience':5},
-        'ModelCheckpoint':{'every_n_epochs':1, 'save_top_k':1},
+        'ModelCheckpoint':{'every_n_epochs':1, 'save_top_k':-1},
         'ckpt_fn':'/scratch/snx3000/kschuurm/irradiance_estimation/train/SIS_point_estimation/4nbyae30/checkpoints/epoch=7-val_loss=0.01023.ckpt',
-        'train_id': [15000, 2638, 662, 342, 691, 4104, 1684, 5426, 1766, 3167, 596, 880, 1346, 4271, 1550, 3196, 5792, 2485, 856, 1468, 3287, 4336, 701, 3126, 891, 1078, 4393, 963, 5705, 5546, 7368, 4887, 164, 704, 2261, 656, 2559, 6197, 3513, 3032, 7351, 430, 1443, 2907, 5856, 5404, 6163, 2483, 3268, 2601, 15444, 13674, 7374, 5480, 7367, 4745, 2014, 4625, 5100, 3761, 460, 7369, 3086, 3366, 282, 591, 1639, 232, 4177, 7370, 2667, 4928, 2712, 4466, 5397, 5516, 1975, 1503, 2115, 1605],
+        'train_id':  [15000, 2638, 662, 342, 691, 4104, 1684, 5426, 1766, 3167, 596, 880, 1346, 4271, 1550, 3196, 5792, 2485, 856, 1468, 3287, 4336, 701, 3126, 891, 1078, 4393, 963, 5705, 5546, 7368, 4887, 164, 704, 2261, 656, 2559, 6197, 3513, 3032, 7351, 430, 1443, 2907, 5856, 5404, 6163, 2483, 3268, 2601, 15444, 13674, 7374, 5480, 7367, 4745, 2014, 4625, 5100, 3761, 460, 7369, 3086, 3366, 282, 591, 1639, 232, 4177, 7370, 2667, 4928, 2712, 4466, 5397, 5516, 1975, 1503, 2115, 1605],
         'valid_id': [1757, 5109, 953, 3028, 2290, 5906, 2171, 427, 2932, 2812, 5839, 1691, 3811, 1420, 5142, 4911, 3660, 3730, 1048],
 
     }
@@ -113,7 +114,6 @@ def main():
         save_top_k = config.ModelCheckpoint['save_top_k'],
         filename='{epoch}-{val_loss:.5f}'
     ) 
-    early_stopping = EarlyStopping(monitor='val_loss', patience=config.EarlyStopping['patience'])
 
     trainer =  Trainer(
         logger=wandb_logger,
@@ -125,8 +125,8 @@ def main():
         log_every_n_steps=500,
         strategy=config.STRATEGY,
         num_nodes=config.NUM_NODES,
-        callbacks=[mc_sarah, early_stopping],
-        max_time="00:02:00:00"
+        callbacks=[mc_sarah],
+        max_time="00:03:00:00"
     )
     
     model = ConvResNet_batchnormMLP(
@@ -140,7 +140,7 @@ def main():
         config=config,
         metric=MeanSquaredError(),
         parameter_loss=True,
-        alpha=1000
+        alpha=3000
     )
     ch = torch.load(config.ckpt_fn, map_location=torch.device('cuda'))
     estimator.load_state_dict(ch['state_dict'])
@@ -149,6 +149,14 @@ def main():
     with benchmark('datasets'):
         valid_datasets = tqdm(map(create_gsdataset, zip(config.valid_id, itertools.repeat(config))))
         train_datasets = tqdm(map(create_gsdataset, zip(config.train_id, itertools.repeat(config))))
+        
+        # zarr_fns = glob('../../ZARR/IEA_PVPS/IEA_PVPS-*.zarr')
+        # station_names_bsrn = [os.path.basename(fn).split('IEA_PVPS-')[-1].split('.')[0] for fn in zarr_fns]
+        # bsrn_datasets = [GroundstationDataset2(f'../../ZARR/IEA_PVPS/IEA_PVPS-{x}.zarr', 
+        #                                 config.y_vars, config.x_vars, config.x_features, config.patch_size['x'], 
+        #                                 config.transform, config.target_transform, sarah_idx_only=True)
+        #                     for x in tqdm(station_names_bsrn)]
+        # train_datasets = bsrn_datasets
     
     valid_dataset = ConcatDataset(valid_datasets)
     train_dataset = ConcatDataset(train_datasets)
@@ -158,8 +166,7 @@ def main():
     trainer.validate(estimator, dm.val_dataloader())
     trainer.fit(estimator, dm)
     
-    _, val_dataloader_sarah = get_dataloaders(config)
-    trainer.validate(estimator, val_dataloader_sarah)
+  
 
 if __name__ == "__main__":
     

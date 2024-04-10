@@ -2,7 +2,7 @@ import os
 import pickle
 import random
 import torch
-import concurrent
+from concurrent.futures import ThreadPoolExecutor
 import pandas as pd
 from torch.utils.data import DataLoader, Dataset
 import xarray
@@ -106,7 +106,7 @@ class ImageDataset(Dataset):
         dtype=torch.float16,
     ):
 
-        self._pool = concurrent.futures.ThreadPoolExecutor()
+        self._pool = ThreadPoolExecutor()
 
         self.seviri = (
             xarray.open_zarr(
@@ -146,16 +146,15 @@ class ImageDataset(Dataset):
             [self.seviri, self.dem], join="exact"
         )  # throws an error if lat, lon not the same
 
-        self.sarah_bnds = xarray.open_zarr('/scratch/snx3000/kschuurm/ZARR/SARAH3_bnds.zarr').load()
-        self.sarah_bnds = self.sarah_bnds.isel(time=self.sarah_bnds.pixel_count != -1)
+        timeindices_sarah, self.max_y, self.max_x, self.min_y, self.min_x  = get_pickled_sarah_bnds()
 
         if timeindices is not None:
-            self.images = timeindices
             self.timeindices = timeindices
-        else:            
-            self.images = self.sarah_bnds.time.values
-            self.timeindices = self.sarah_bnds.time.values
- 
+        else:
+            self.timeindices = timeindices_sarah
+        timeidxnotnan_seviri = np.load('/scratch/snx3000/kschuurm/ZARR/idxnotnan_seviri.npy')
+        self.timeindices = np.array(list(set(self.timeindices.values).intersection(set(timeidxnotnan_seviri))))
+        self.images = self.timeindices
 
         self.batch_in_time = batch_in_time
         if self.batch_in_time is not None:
@@ -176,8 +175,8 @@ class ImageDataset(Dataset):
         pad_x = int(np.floor(patch_x / 2))
         pad_y = int(np.floor(patch_y / 2))
 
-        H = self.sarah_bnds.max_lat - self.sarah_bnds.min_lat
-        W = self.sarah_bnds.max_lon - self.sarah_bnds.min_lon
+        H = self.max_y - self.min_y
+        W = self.max_x - self.min_x
         # self.patches_per_image = np.floor((H - 2 * pad_y) / stride_y) \
         #     * np.floor((W - 2 * pad_x) / stride_x)
         self.patches_per_image = ((len(self.lat)-2*pad_y )//stride_y) * ((len(self.lon) - 2*pad_x)//stride_x)

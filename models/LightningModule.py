@@ -272,11 +272,7 @@ class LitEstimatorPoint(L.LightningModule):
         loss = self.metric(y_hat, y)
         return loss, y_hat.squeeze(), y.squeeze()
 
-    # def configure_optimizers(self):
-    #     optimizer = Adam(self.parameters(), lr=self.lr)
-    #     scheduler = CosineAnnealingLR(optimizer, T_max=1)
-    #     return {"optimizer": optimizer, "lr_scheduler": scheduler}
-    
+
     def configure_optimizers(self):
         optimizer = torch.optim.AdamW(self.parameters(), 
                                       lr=self.lr,
