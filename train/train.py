@@ -103,7 +103,7 @@ def main():
         "x_features": ["dayofyear", "lat", "lon", 'SZA', "AZI",],
         "transform": ZeroMinMax(),
         "target_transform": ZeroMinMax(),
-        'max_epochs': 15,
+        'max_epochs': 5,
         # Compute related
         'num_workers': 24,
         'ACCELERATOR': "gpu",
@@ -112,7 +112,8 @@ def main():
         'STRATEGY': "ddp",
         'PRECISION': "32",
         'EarlyStopping': {'patience':4},
-        'ModelCheckpoint':{'every_n_epochs':1, 'save_top_k':3}
+        'ModelCheckpoint':{'every_n_epochs':1, 'save_top_k':-1},
+        'ckpt_fn': '/scratch/snx3000/kschuurm/irradiance_estimation/train/SIS_point_estimation_groundstation/pl86of1b/checkpoints/epoch=4-val_loss=0.01630.ckpt',
     }
     config = SimpleNamespace(**config)
 
@@ -152,21 +153,24 @@ def main():
         strategy=config.STRATEGY,
         num_nodes=config.NUM_NODES,
         callbacks=[ mc_sarah,],
-        max_time="00:02:00:00"
+        max_time="00:01:00:00"
     )
 
     estimator = LitEstimatorPoint(
         model=model,
-        learning_rate=0.0001,
+        learning_rate=0.00001,
         config=config,
         metric=MeanSquaredError(),
     )
+
+    if config.ckpt_fn is not None:
+        ch = torch.load(config.ckpt_fn, map_location=torch.device('cuda'))
+        estimator.load_state_dict(ch['state_dict'])
 
     train_dataloader, val_dataloader = get_dataloaders(config)
 
     trainer.fit(
         estimator, train_dataloaders=train_dataloader, val_dataloaders=val_dataloader,
-        ckpt_path='/scratch/snx3000/kschuurm/irradiance_estimation/train/SIS_point_estimation/aysuin0x/checkpoints/epoch=4-val_loss=0.01073.ckpt',
     )
     
 

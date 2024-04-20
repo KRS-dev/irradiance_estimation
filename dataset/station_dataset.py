@@ -240,6 +240,8 @@ class GroundstationDataset2(Dataset):
         self.x = torch.Tensor(self.data[self.x_features].to_dataarray(dim="channels").values) # CxT
         self.x = self.x.permute(1,0) # TxC
 
+        self.timeindices = self.data.time.values
+
         self.transform = transform
         self.target_transform = target_transform
 
@@ -258,7 +260,6 @@ class GroundstationDataset2(Dataset):
         x = self.x[i]
         y = self.y[i]
 
-        
         return X, x, y
     
 
