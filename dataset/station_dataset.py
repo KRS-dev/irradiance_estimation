@@ -157,7 +157,7 @@ class GroundstationDataset2(Dataset):
             self.data = self.data.sel(time=self.data.time.dt.year == subset_year)
 
         if sarah_idx_only:
-            sarah = xarray.open_zarr('/scratch/snx3000/kschuurm/ZARR/SARAH3_new.zarr')
+            sarah = xarray.open_zarr('/scratch/snx3000/kschuurm/ZARR/SARAH3.zarr')
             sarah_time = set(self.data.time.values).intersection(set(sarah.time.values))
             sarah_time = np.sort(np.array(list(sarah_time)))
             sarah.close()

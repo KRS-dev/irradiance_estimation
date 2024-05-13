@@ -10,6 +10,7 @@ from datetime import timedelta
 import lightning.pytorch as L
 import numpy as np
 import pandas as pd
+import ephem
 from tqdm import tqdm
 from datetime import datetime
 import matplotlib.pyplot as plt
@@ -99,7 +100,6 @@ class ImageDataset(Dataset):
         patch_size,
         transform,
         target_transform,
-        random_sample=0.1,
         timeindices=None,
         shuffle=True,
         batch_in_time=2,
@@ -110,7 +110,7 @@ class ImageDataset(Dataset):
 
         self.seviri = (
             xarray.open_zarr(
-                "/scratch/snx3000/kschuurm/ZARR/SEVIRI_new.zarr"
+                "/scratch/snx3000/kschuurm/ZARR/SEVIRI_gapfilled.zarr"
             ).channel_data.to_dataset(dim='channel') 
             .rename_dims({"x": "lon", "y": "lat"})
             .rename_vars(
@@ -133,15 +133,15 @@ class ImageDataset(Dataset):
         )
         self.dem = xarray.open_zarr("/scratch/snx3000/kschuurm/ZARR/DEM.zarr").fillna(0)
 
-        self.sarah = xarray.open_zarr("/scratch/snx3000/kschuurm/ZARR/SARAH3_new.zarr").channel_data.to_dataset(dim='channel') 
-        self.solarpos = xarray.open_zarr(
-            "/scratch/snx3000/kschuurm/ZARR/SOLARPOS_new.zarr"
-        ).channel_data.to_dataset(dim='channel') .drop_duplicates(
-            dim="time"
-        )  # SOLARPOS should be the same dim as SEVIRI
-        self.seviri = xarray.merge(
-            [self.seviri, self.solarpos], join  ="exact"
-        )  # throws an error if time, lat, lon dim not the same
+        self.sarah = xarray.open_zarr("/scratch/snx3000/kschuurm/ZARR/SARAH3.zarr").channel_data.to_dataset(dim='channel') 
+        # self.solarpos = xarray.open_zarr(
+        #     "/scratch/snx3000/kschuurm/ZARR/SOLARPOS_new.zarr"
+        # ).channel_data.to_dataset(dim='channel') .drop_duplicates(
+        #     dim="time"
+        # )  # SOLARPOS should be the same dim as SEVIRI
+        # self.seviri = xarray.merge(
+        #     [self.seviri, self.solarpos], join  ="exact"
+        # )  # throws an error if time, lat, lon dim not the same
         self.seviri = xarray.merge(
             [self.seviri, self.dem], join="exact"
         )  # throws an error if lat, lon not the same
@@ -152,15 +152,15 @@ class ImageDataset(Dataset):
             self.timeindices = timeindices
         else:
             self.timeindices = timeindices_sarah
-        timeidxnotnan_seviri = np.load('/scratch/snx3000/kschuurm/ZARR/idxnotnan_seviri.npy')
-        self.timeindices = np.array(list(set(self.timeindices.values).intersection(set(timeidxnotnan_seviri))))
+        # timeidxnotnan_seviri = np.load('/scratch/snx3000/kschuurm/ZARR/idxnotnan_seviri.npy')
+        self.timeindices = np.array(list(set(self.timeindices.values).intersection(set(self.seviri.time.values))))
         self.images = self.timeindices
 
-        self.batch_in_time = batch_in_time
-        if self.batch_in_time is not None:
-            self.images = [self.images[i:i+self.batch_in_time] for i in range(0, len(self.images), self.batch_in_time)]
-        else:
-            self.images = [[i] for i in self.images]
+        # self.batch_in_time = batch_in_time
+        # if self.batch_in_time is not None:
+        #     self.images = [self.images[i:i+self.batch_in_time] for i in range(0, len(self.images), self.batch_in_time)]
+        # else:
+        #     self.images = [[i] for i in self.images]
 
         if shuffle is not None:
             self.images_samples = np.random.choice(range(len(self.images)), size=len(self.images), replace=False)
@@ -175,10 +175,6 @@ class ImageDataset(Dataset):
         pad_x = int(np.floor(patch_x / 2))
         pad_y = int(np.floor(patch_y / 2))
 
-        H = self.max_y - self.min_y
-        W = self.max_x - self.min_x
-        # self.patches_per_image = np.floor((H - 2 * pad_y) / stride_y) \
-        #     * np.floor((W - 2 * pad_x) / stride_x)
         self.patches_per_image = ((len(self.lat)-2*pad_y )//stride_y) * ((len(self.lon) - 2*pad_x)//stride_x)
 
         self.x_features = x_features.copy()
@@ -186,7 +182,7 @@ class ImageDataset(Dataset):
         self.y_vars = y_vars.copy()
         self.transform = transform
         self.target_transform = target_transform
-        self.dtype =dtype
+        self.dtype = dtype
 
         self.image_i = None
         self.current_singleImageDataset = None
@@ -217,7 +213,6 @@ class ImageDataset(Dataset):
             self.next_images.append(self.load_singleImageDataset_generator(self.images[i + preload_n - 1]))
 
     def load_singleImageDataset(self, dt):
-        extra_batch_dimension = None if self.batch_in_time is None else 1
         d = dict(
             hrseviri=self.seviri.sel(time=dt),
             sarah=self.sarah.sel(time=dt),
@@ -227,14 +222,12 @@ class ImageDataset(Dataset):
             patch_size=self.patch_size,
             transform=self.transform,
             target_transform=self.target_transform,
-            extra_batch_dimension=extra_batch_dimension,
             dtype=self.dtype,
         )
         dataset = self._pool.submit(create_singleImageDataset, **d)
         return dataset
 
     def load_singleImageDataset_generator(self, dt):
-        extra_batch_dimension = None if self.batch_in_time is None else 1
         d = dict(
             hrseviri=self.seviri.sel(time=dt),
             sarah=self.sarah.sel(time=dt),
@@ -244,7 +237,6 @@ class ImageDataset(Dataset):
             patch_size=self.patch_size,
             transform=self.transform,
             target_transform=self.target_transform,
-            extra_batch_dimension=extra_batch_dimension,
             dtype=self.dtype,
         )
         dataset = self._pool.submit(create_singleImageDataset_generator, **d)
@@ -262,6 +254,8 @@ class ImageDataset(Dataset):
             self.load_new_image(idx_image)
 
         return self.current_singleImageDataset[idx_patch]
+
+
 
 class SeviriDataset(Dataset):
     def __init__(
@@ -332,9 +326,13 @@ class SeviriDataset(Dataset):
             with open('/scratch/snx3000/kschuurm/ZARR/DEM.pkl', 'rb') as pickle_file:
                 self.dem = pickle.load(pickle_file) 
 
-        self.sarah = xarray.open_zarr("/scratch/snx3000/kschuurm/ZARR/SARAH3_new.zarr")
+        self.sarah = xarray.open_zarr("/scratch/snx3000/kschuurm/ZARR/SARAH3.zarr")
+
+        self.sarah_nulls = xarray.open_zarr('/scratch/snx3000/kschuurm/ZARR/SARAH3_nulls.zarr')
+
     
         self.solarpos = xarray.open_zarr("/scratch/snx3000/kschuurm/ZARR/SOLARPOS_new.zarr") 
+        self.solarpos['time'] = self.solarpos.time - np.timedelta64(15, 'm') # correct for endtime to start time image acquisition
         
         sizes= self.seviri.sizes
         self.H = sizes['lat']
@@ -342,36 +340,50 @@ class SeviriDataset(Dataset):
 
         self.pad = int(np.floor(patch_size['x']/2))
 
-        timeindices_sarah, self.max_y, self.max_x, self.min_y, self.min_x  = get_pickled_sarah_bnds()
+        # timeindices_sarah, self.max_y, self.max_x, self.min_y, self.min_x  = get_pickled_sarah_bnds()
+        timeindices_sarah = self.sarah_nulls.any.where(self.sarah_nulls.any == True, drop=True).time.values
+        timeindices_sarah = timeindices_sarah + np.timedelta64(15, 'm') # correct for starttime to endtime image acquisition
 
         if timeindices is not None:
             self.timeindices = timeindices
         else:
             self.timeindices = timeindices_sarah
-        timeidxnotnan_seviri = np.load('/scratch/snx3000/kschuurm/ZARR/idxnotnan_seviri.npy')
+
+        timeidxnotnan_seviri = np.load('/scratch/snx3000/kschuurm/ZARR/idxnotnan_seviri.npy') # end time to starttime image acquisition
+
         self.timeindices = np.array(list(set(self.timeindices.values).intersection(set(timeidxnotnan_seviri))))
         
-        
+        self.timeindices = self.timeindices[torch.randperm(len(self.timeindices))]
+
         if self.seed is not None:
             with benchmark('sampler setup'):
                 self.idx_x_sampler = []
                 self.idx_y_sampler = []
                 
                 for timeidx in self.timeindices:
-                    min_x = int(self.min_x.sel(time=timeidx).values)
-                    min_y = int(self.min_y.sel(time=timeidx).values)
-                    max_x = int(self.max_x.sel(time=timeidx).values)
-                    max_y = int(self.max_y.sel(time=timeidx).values)
-                    idx_x_samples = torch.randint(min_x + self.pad, 
-                                                max_x-self.pad, 
-                                                (self.patches_per_image,), 
-                                                dtype=torch.int32, 
-                                                generator=self.rng)
-                    idx_y_samples = torch.randint(min_y + self.pad, 
-                                                max_y-self.pad, 
-                                                (self.patches_per_image,), 
-                                                dtype=torch.int32, 
-                                                generator=self.rng)
+
+
+                    notnulls = self.sarah_nulls.nulls.sel(time=timeidx).load()
+
+                    coords_notnull = np.argwhere(notnulls)
+                    samples = coords_notnull[torch.randint(0, len(coords_notnull), (self.patches_per_image,), dtype=torch.int32)]
+                    idx_x_samples = samples[:,0]
+                    idx_y_samples = samples[:,1]
+
+                    # min_x = int(self.min_x.sel(time=timeidx).values)
+                    # min_y = int(self.min_y.sel(time=timeidx).values)
+                    # max_x = int(self.max_x.sel(time=timeidx).values)
+                    # max_y = int(self.max_y.sel(time=timeidx).values)
+                    # idx_x_samples = torch.randint(min_x + self.pad, 
+                    #                             max_x-self.pad, 
+                    #                             (self.patches_per_image,), 
+                    #                             dtype=torch.int32, 
+                    #                             generator=self.rng)
+                    # idx_y_samples = torch.randint(min_y + self.pad, 
+                    #                             max_y-self.pad, 
+                    #                             (self.patches_per_image,), 
+                    #                             dtype=torch.int32, 
+                    #                             generator=self.rng)
                     self.idx_x_sampler.append(idx_x_samples)
                     self.idx_y_sampler.append(idx_y_samples)
 
@@ -387,18 +399,29 @@ class SeviriDataset(Dataset):
             idx_x_samples = self.idx_x_sampler[i]
             idx_y_samples = self.idx_y_sampler[i]
         else:
-            min_x = int(self.min_x.sel(time=timeidx).values)
-            min_y = int(self.min_y.sel(time=timeidx).values)
-            max_x = int(self.max_x.sel(time=timeidx).values)
-            max_y = int(self.max_y.sel(time=timeidx).values)
-            idx_x_samples = torch.randint(min_x + self.pad, 
-                                        max_x-self.pad, 
-                                        (self.patches_per_image,), 
-                                        dtype=torch.int32,)
-            idx_y_samples = torch.randint(min_y + self.pad, 
-                                        max_y-self.pad, 
-                                        (self.patches_per_image,), 
-                                        dtype=torch.int32,)
+
+            notnulls = self.sarah_nulls.nulls.sel(time=self.timeindices[i]).load()
+
+            coords_notnull = np.argwhere(notnulls)
+            samples = coords_notnull[torch.randint(0, len(coords_notnull), (self.patches_per_image,), dtype=torch.int32)]
+            idx_x_samples = samples[:,0]
+            idx_y_samples = samples[:,1]
+            # min_x = int(self.min_x.sel(time=timeidx).values)
+            # min_y = int(self.min_y.sel(time=timeidx).values)
+            # max_x = int(self.max_x.sel(time=timeidx).values)
+            # max_y = int(self.max_y.sel(time=timeidx).values)
+            # min_x =0
+            # min_y = 0
+            # max_x = 736-1
+            # max_y = 658-1
+            # idx_x_samples = torch.randint(min_x + self.pad, 
+            #                             max_x-self.pad, 
+            #                             (self.patches_per_image,), 
+            #                             dtype=torch.int32,)
+            # idx_y_samples = torch.randint(min_y + self.pad, 
+            #                             max_y-self.pad, 
+            #                             (self.patches_per_image,), 
+            #                             dtype=torch.int32,)
         
         idx_x_da = xarray.DataArray(idx_x_samples, dims=['z'])
         idx_y_da = xarray.DataArray(idx_y_samples, dims=['z'])
@@ -420,12 +443,36 @@ class SeviriDataset(Dataset):
             x = torch.cat([x_dayofyear, x_lat, x_lon], dim=1)
         
         y = torch.tensor(y.channel_data.values, dtype=self.dtype).permute(1,0)
+
         if 'SZA' in self.x_features:
-            subset_solarpos = self.solarpos.sel(time = self.timeindices[i]).load()
-            x_solarpos = subset_solarpos.channel_data.sel(channel=['SZA', 'AZI']) \
-                        .isel(lon=idx_x_da, lat=idx_y_da).values
-            x_solarpos = torch.tensor(x_solarpos, dtype=self.dtype).permute(1,0) # BxC
-            x = torch.cat([x, x_solarpos], dim=1)
+            sun = ephem.Sun()
+            szas, azis, = [], []
+            for lat, lon in zip(x_lat, x_lon):
+                latitude = lat.item()
+                longitude = lon.item()
+                altitude = 0
+                thetime = pd.to_datetime(timeidx)
+                obs = ephem.Observer()
+                obs.date = ephem.Date(thetime)
+                obs.lat = str(latitude)
+                obs.lon = str(longitude)
+                obs.elevation = altitude if not np.isnan(altitude) else 0
+
+                sun.compute(obs)
+                azis.append(sun.az)
+                szas.append(np.pi/2 - sun.alt)
+
+            azis = np.array(azis)
+            szas = np.array(szas)
+
+            azis = torch.tensor(azis, dtype=self.dtype).view(-1,1)
+            szas = torch.tensor(szas, dtype=self.dtype).view(-1,1)
+
+            # subset_solarpos = self.solarpos.sel(time = self.timeindices[i]).load()
+            # x_solarpos = subset_solarpos.channel_data.sel(channel=['SZA', 'AZI']) \
+            #             .isel(lon=idx_x_da, lat=idx_y_da).values
+            # x_solarpos = torch.tensor(x_solarpos, dtype=self.dtype).permute(1,0) # BxC
+            x = torch.cat([x, szas, azis], dim=1)
 
         if 'DEM' in self.x_features:
             x_DEM = self.dem.DEM.isel(lon=idx_x_da, lat=idx_y_da) \
@@ -461,6 +508,9 @@ class SeviriDataset(Dataset):
         if y.isnan().any():
             print("nan in y")
             print(y)
+
+        if (y == -1).any():
+            print('zeros in output', sum(y == -1))
 
         return X, x, y
 
@@ -695,13 +745,12 @@ class SingleImageDataset_generator(Dataset):
         patch_size,
         transform,
         target_transform,
-        extra_batch_dimension: int=None,
         dtype=torch.float16,
     ):
         super(SingleImageDataset_generator, self).__init__()
 
-        self.seviri = hrseviri
-        self.sarah = sarah
+        self.seviri = hrseviri.load()
+        self.sarah = sarah.load()
         self.lat, self.lon = xarray.broadcast(
             hrseviri.lat, hrseviri.lon
         )  # size(HxW) both
@@ -712,7 +761,6 @@ class SingleImageDataset_generator(Dataset):
 
         self.transform = transform
         self.target_transform = target_transform
-        self.extra_batch_dimension = extra_batch_dimension
         self.dtype = dtype
 
         self.patch_size = patch_size
@@ -723,82 +771,38 @@ class SingleImageDataset_generator(Dataset):
         self.pad_x = int(np.floor(patch_size["x"] / 2))
         self.pad_y = int(np.floor(patch_size["y"] / 2))
 
-        # TO DO implement random sampling spatially
-        # self.random_sample = random_sample
-        # if self.random_sample is not None:
-        #     self.sample_size = int(
-        #         np.floor(self.random_sample * self.patches_per_image)
-        #     )
-        #     self.samples = np.random.randint(
-        #         0, self.patches_per_image, self.sample_size
-        #     )
-        # else:
-        #     self.sample_size = self.patches_per_image
-        #     self.samples = range(0, self.sample_size)
-
         self.X = torch.tensor(
             self.seviri[x_vars].to_dataarray(dim="channels").values, dtype=self.dtype
-        )  # Cx'T'xHxW or channels, time, lat, lon
+        )  # CxHxW or channels, lat, lon
 
-        self.X = self.X.movedim(1, 0) # TxCxHxW
-                  
-        # self.lat_patches = torch.tensor(self.lat.values.copy(), dtype=dtype)  # HxW
-        # # self.lat_patches = unfold_tensor(self.lat_patches)  # BxPHxPW
 
-        # self.lon_patches = torch.tensor(self.lon.values.copy(), dtype=dtype)  # HxW
-        # self.lon_patches = unfold_tensor(self.lon_patches)  # BxPHxPW
-
+        # "dayofyear", "lat", "lon", 'SZA', "AZI",
         # Manipulate point features
-        x_features_avail = set(x_features).intersection(set(self.seviri.keys()))
-        self.x_features_temp = x_features.copy()
-        self.x = self.seviri[x_features_avail]
 
-        if "lat" in x_features:
-            self.x = self.x.assign(
-                {
-                    "lat_": self.lat,
-                    "lon_": self.lon,
-                }
-            )
-            self.x_features_temp[1] = "lat_"
-            self.x_features_temp[2] = "lon_"
+        dayofyear = self.seviri.time.dt.dayofyear.astype(int).item()
+        dayofyear = dayofyear*torch.ones(1, self.X.shape[1], self.X.shape[2], dtype=self.dtype)
 
-        if "dayofyear" in x_features:
-            dayofyear = self.seviri.time.dt.dayofyear.astype(int)
-            dayofyear, _ = xarray.broadcast(dayofyear, self.lat)
-            self.x = self.x.assign(
-                {
-                    "dayofyear": dayofyear,
-                }
-            )
-        self.x = torch.tensor(
-            self.x[self.x_features_temp].to_dataarray(dim="channels").values,
-            dtype=self.dtype,
-        )  # Cx...xHxW
-        self.x = self.x.permute(1,0,2,3) # TxCxHxW
-        # self.x = self.x[:, :, pad_y:-pad_y:stride_y, pad_x:-pad_x:stride_x]
-        # self.x = self.x.permute(1,2,3,0).reshape(-1, len(self.x_features_temp))
+        
+
+        lat = torch.tensor(self.lat.values, dtype=self.dtype).unsqueeze(0)
+        lon = torch.tensor(self.lon.values, dtype=self.dtype).unsqueeze(0)
+        self.x = torch.cat([dayofyear, lat, lon], dim=0)
+
 
         # Manipulate output
         self.y = torch.tensor(
             self.sarah[y_vars].to_dataarray(dim="channels").values, dtype=dtype
-        )  # CxTxHxW
-        self.y = self.y.permute(1,0,2,3)
-        # self.y = self.y[:, :, pad_y:-pad_y:stride_y, pad_x:-pad_x:stride_x]
-        # self.y = self.y.permute(1,2,3,0).reshape(-1, len(self.y_vars))
+        )  # CxHxW
 
-        if self.transform:
-            self.X = self.transform(self.X, self.x_vars)
-            self.x = self.transform(self.x, self.x_features)
+        self.sun = ephem.Sun()
+        self.obs = ephem.Observer()
 
-        if self.target_transform:
-            self.y = self.target_transform(self.y, self.y_vars)
 
     def __len__(self):
-        T, C, H, W = self.x.shape
+        C, H, W = self.x.shape
         Y_dim = int((H - self.patch_size['y'] + 1)//self.patch_size['stride_y'])
         X_dim = int((W - self.patch_size['x'] + 1)//self.patch_size['stride_y']) 
-        return T*(Y_dim)*(X_dim)
+        return Y_dim*X_dim
 
     def get_indices(self, i):
         Y_dim, X_dim = self.X.shape[-2:]
@@ -806,14 +810,13 @@ class SingleImageDataset_generator(Dataset):
         X_dim = int((X_dim - self.patch_size['x'] + 1)//self.patch_size['stride_y']) 
         idx_y = int(i % Y_dim)
         idx_x = int((i // Y_dim) % X_dim)
-        idx_t = int(i//(X_dim*Y_dim))
 
-        return idx_t, idx_y, idx_x
+        return idx_y, idx_x
 
     def get_item_in_order(self, i):
-        idx_t, idx_y, idx_x = self.get_indices(i)
+        idx_y, idx_x = self.get_indices(i)
         # print(idx_y, idx_x, idx_t)
-        X_element = self.X[idx_t, :, 
+        X_element = self.X[:, 
                         idx_y*self.patch_size['stride_y']:idx_y*self.patch_size['stride_y'] + self.patch_size['y'], 
                         idx_x*self.patch_size['stride_x']:idx_x*self.patch_size['stride_x'] + self.patch_size['x']]
         # else:
@@ -823,8 +826,35 @@ class SingleImageDataset_generator(Dataset):
         pad_x = int(np.floor(self.patch_size['x']/2))
         pad_y = int(np.floor(self.patch_size['y']/2))
 
-        x_element = self.x[idx_t, :, idx_y*self.patch_size['stride_y'] + pad_y, idx_x*self.patch_size['stride_x']+ pad_x]
-        y_element = self.y[idx_t, :, idx_y*self.patch_size['stride_y'] + pad_y, idx_x*self.patch_size['stride_x']+ pad_x]
+
+
+        x_element = self.x[:, idx_y*self.patch_size['stride_y'] + pad_y, idx_x*self.patch_size['stride_x']+ pad_x]
+
+
+        if 'SZA' in self.x_features:
+            
+            szas, azis, = [], []
+            lat, lon = x_element[1], x_element[2]
+            latitude = lat.item()
+            longitude = lon.item()
+            altitude = 0
+            thetime = pd.to_datetime(self.seviri.time.values)
+        
+            self.obs.date = ephem.Date(thetime)
+            self.obs.lat = str(latitude)
+            self.obs.lon = str(longitude)
+            self.obs.elevation = altitude if not np.isnan(altitude) else 0
+
+            self.sun.compute(self.obs)
+            azis = self.sun.az
+            szas = np.pi/2 - self.sun.alt
+            
+            azis = torch.tensor(azis, dtype=self.dtype).view(-1)
+            szas = torch.tensor(szas, dtype=self.dtype).view(-1)
+
+            x_element = torch.cat([x_element, szas, azis], dim=0)
+
+        y_element = self.y[:, idx_y*self.patch_size['stride_y'] + pad_y, idx_x*self.patch_size['stride_x']+ pad_x]
 
         return X_element, x_element, y_element
 
@@ -842,10 +872,17 @@ class SingleImageDataset_generator(Dataset):
             print("nan in y")
             print(y_element)
 
+        if self.transform:
+            X_element = self.transform(X_element.unsqueeze(0), self.x_vars).squeeze()
+            x_element = self.transform(x_element.unsqueeze(0), self.x_features).squeeze()
+
+        if self.target_transform:
+            y_element = self.target_transform(y_element.unsqueeze(0), self.y_vars).squeeze()
+
         return X_element, x_element, y_element
 
     def get_latlon_patch(self, i):
-        _, idx_y, idx_x = self.get_indices(i)
+        idx_y, idx_x = self.get_indices(i)
         a = slice(idx_y*self.patch_size['stride_y'], idx_y*self.patch_size['stride_y'] + self.patch_size['y'])
         b = slice(idx_x*self.patch_size['stride_x'], idx_x*self.patch_size['stride_x'] + self.patch_size['x'])
         lat_patch = self.lat[a,b]   

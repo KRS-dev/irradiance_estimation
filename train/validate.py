@@ -1,6 +1,7 @@
 import itertools
 from multiprocessing import Pool
 import os
+from pathlib import Path
 import traceback
 from dataset.station_dataset import GroundstationDataset, GroundstationDataset2
 from lightning import LightningDataModule
@@ -88,57 +89,34 @@ def main():
     }
     config = SimpleNamespace(**config)
 
-       
-    model = ConvResNet_batchnormMLP(
-        num_attr=len(config.x_features),
-        input_channels=len(config.x_vars),
-        output_channels=len(config.y_vars),
-    )
 
-    resume_ckpt_fn = '/scratch/snx3000/kschuurm/irradiance_estimation/train/SIS_point_estimation_groundstation/groundstations_only/checkpoints/epoch=10-val_loss=0.01703.ckpt'
+    project = "SIS_point_estimation"
+    id = 'groundstations_only'
+    wandb_logger = WandbLogger(id=id, project=project, resume=True, log_model=False)
 
-    config.model = type(model).__name__
+    artifact_dir = wandb_logger.download_artifact(f'krschuurman/{project}/model-{id}:best', artifact_type="model")
+    print('artifact_dir:', artifact_dir)
 
-    wandb_logger = WandbLogger(project="SIS_point_estimation", id='groundstations_only',resume=True, log_model=False)
+    estimator = LitEstimatorPoint.load_from_checkpoint(Path(artifact_dir) / "model.ckpt")
+    config.model = type(estimator.model).__name__
 
-    mc_sarah = ModelCheckpoint(
-        monitor='val_loss', 
-        every_n_epochs=config.ModelCheckpoint['every_n_epochs'], 
-        save_top_k = config.ModelCheckpoint['save_top_k'],
-        filename='{epoch}-{val_loss:.5f}'
-    ) 
-    # early_stopping = EarlyStopping(monitor='val_loss', patience=config.EarlyStopping['patience'])
 
     trainer =  Trainer(
         logger=wandb_logger,
         accelerator=config.ACCELERATOR,
         devices=config.DEVICES,
-        min_epochs=1,
-        max_epochs=config.max_epochs,
         precision=config.PRECISION,
         log_every_n_steps=500,
         strategy=config.STRATEGY,
         num_nodes=config.NUM_NODES,
-        callbacks=[mc_sarah],
         max_time="00:02:00:00"
     )
+
     
-    model = ConvResNet_batchnormMLP(
-        num_attr=len(config.x_features),
-        input_channels=len(config.x_vars),
-        output_channels=len(config.y_vars),
-    )
-    estimator = LitEstimatorPoint(
-        model=model,
-        learning_rate=0.00001,
-        config=config,
-        metric=MeanSquaredError(),
-    )
-    ch = torch.load(resume_ckpt_fn, map_location=torch.device('cuda'))
-    estimator.load_state_dict(ch['state_dict'])
-    
-    val_dataloader_sarah = get_dataloaders(config)
-    trainer.validate(estimator, val_dataloader_sarah, ckpt_path=resume_ckpt_fn)
+    _, val_dataloader_sarah = get_dataloaders(config)
+    trainer.validate(estimator, val_dataloader_sarah)
+
+    wandb_logger.experiment.finish()
 
 if __name__ == "__main__":
     

@@ -103,7 +103,7 @@ def main():
         "x_features": ["dayofyear", "lat", "lon", 'SZA', "AZI",],
         "transform": ZeroMinMax(),
         "target_transform": ZeroMinMax(),
-        'max_epochs': 5,
+        'max_epochs': 10,
         # Compute related
         'num_workers': 24,
         'ACCELERATOR': "gpu",
@@ -111,21 +111,23 @@ def main():
         'NUM_NODES': 32,
         'STRATEGY': "ddp",
         'PRECISION': "32",
-        'EarlyStopping': {'patience':4},
-        'ModelCheckpoint':{'every_n_epochs':1, 'save_top_k':-1},
-        'ckpt_fn': '/scratch/snx3000/kschuurm/irradiance_estimation/train/SIS_point_estimation_groundstation/pl86of1b/checkpoints/epoch=4-val_loss=0.01630.ckpt',
+        'EarlyStopping': {'patience':2},
+        'ModelCheckpoint':{'every_n_epochs':1, 'save_top_k':1},
+        'ckpt_fn': None, #'/scratch/snx3000/kschuurm/irradiance_estimation/train/SIS_point_estimation_groundstation/pl86of1b/checkpoints/epoch=4-val_loss=0.01630.ckpt',
     }
     config = SimpleNamespace(**config)
 
-       
-    model = ConvResNet_batchnormMLP(
-        num_attr=len(config.x_features),
-        input_channels=len(config.x_vars),
-        output_channels=len(config.y_vars),
+
+    estimator = LitEstimatorPoint(
+        learning_rate=0.0001,
+        config=config,
+        metric=MeanSquaredError(),
+        zero_loss=MeanAbsoluteError(),
     )
 
-    config.model = type(model).__name__
-    wandb_logger = WandbLogger(project="SIS_point_estimation", log_model=True)
+    config.model = type(estimator.model).__name__
+
+    wandb_logger = WandbLogger(name='zero_loss_MAE', project="SIS_point_estimation", log_model=True)
 
     if rank_zero_only.rank == 0:  # only update the wandb.config on the rank 0 process
         wandb_logger.experiment.config.update(vars(config))
@@ -134,13 +136,15 @@ def main():
         monitor='val_loss', 
         every_n_epochs=config.ModelCheckpoint['every_n_epochs'], 
         save_top_k = config.ModelCheckpoint['save_top_k'],
-        filename='{epoch}-{val_loss:.5f}'
+        filename='{epoch}-{val_loss:.5f}',
+        save_last=True,
     ) 
     early_stopping = EarlyStopping(monitor='val_loss', 
                                    patience=config.EarlyStopping['patience'],
                                    verbose=True,
-                                   min_delta=0.0000001,
-                                   check_on_train_epoch_end=False,)
+                                   min_delta=0,
+                                   check_on_train_epoch_end=False,
+                                   log_rank_zero_only=True,)
 
     trainer =  Trainer(
         logger=wandb_logger,
@@ -152,16 +156,10 @@ def main():
         log_every_n_steps=500,
         strategy=config.STRATEGY,
         num_nodes=config.NUM_NODES,
-        callbacks=[ mc_sarah,],
-        max_time="00:01:00:00"
+        callbacks=[ mc_sarah, early_stopping],
+        max_time="00:02:00:00"
     )
 
-    estimator = LitEstimatorPoint(
-        model=model,
-        learning_rate=0.00001,
-        config=config,
-        metric=MeanSquaredError(),
-    )
 
     if config.ckpt_fn is not None:
         ch = torch.load(config.ckpt_fn, map_location=torch.device('cuda'))
@@ -172,6 +170,10 @@ def main():
     trainer.fit(
         estimator, train_dataloaders=train_dataloader, val_dataloaders=val_dataloader,
     )
+
+    print('Best model:', mc_sarah.best_model_path)
+
+    wandb_logger.experiment.finish()
     
 
 if __name__ == "__main__":

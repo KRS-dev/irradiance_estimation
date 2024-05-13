@@ -336,7 +336,7 @@ def plot_station_scatter(lats, lons, metrics, station_nms,
 
     # plot texts
     if plot_text:
-        text = [f'{round(val)}' for nm, val in zip(station_nms, metrics)]
+        text = [f'{np.round(val)}' for nm, val in zip(station_nms, metrics)]
 
         texts = []
         for i in range(len(text)):

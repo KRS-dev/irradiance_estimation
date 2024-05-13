@@ -17,7 +17,7 @@ class ResBlock(nn.Module):
         )
 
         self.conv2 = nn.Sequential(
-            nn.Conv2d(hidden_channels, hidden_channels, kernel_size, padding="same"),
+            nn.Conv2d(hidden_channels, out_channels, kernel_size, padding="same"),
             nn.BatchNorm2d(hidden_channels),
             nn.ReLU(),
         )
@@ -72,6 +72,7 @@ class ConvResNet(nn.Module):
 
         self.relu_rect = nn.ReLU()
 
+
     def forward(self, x, x_attrs):
 
         x = self.conv1(x)
@@ -86,8 +87,8 @@ class ConvResNet(nn.Module):
             [x, x_attrs]
         )  # batch_size x 256+6, Stack along the Channel dim
         x = self.mlp(x)
-        x = self.relu_rect(x + 1) - 1 ## Assuming minmax scaling -1 to 1 where going lower than -1 is unphysical
-                
+        
+        x = self.relu_rect(x + 1) - 1
         return x
 
 class ConvResNet_dropout(ConvResNet):
