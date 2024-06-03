@@ -312,7 +312,7 @@ class SeviriDataset(Dataset):
         self.pad = int(np.floor(patch_size['x']/2))
 
         # timeindices_sarah, self.max_y, self.max_x, self.min_y, self.min_x  = get_pickled_sarah_bnds()
-        timeindices_sarah = self.sarah_nulls['any'].where((self.sarah_nulls['any'] == True).compute(), drop=True).time.values
+        timeindices_sarah = self.sarah_nulls['any'].where((self.sarah_nulls['nullssum'] > 5000).compute(), drop=True).time.values
 
         if timeindices is not None:
             self.timeindices = timeindices
@@ -340,8 +340,8 @@ class SeviriDataset(Dataset):
 
                         coords_notnull = np.argwhere(np.array(notnulls[self.pad:-self.pad, self.pad:-self.pad]))
                         samples = coords_notnull[torch.randint(0, len(coords_notnull), (self.patches_per_image,), dtype=torch.int32, generator=self.rng)]
-                        idx_x_samples = self.pad + samples[:,0]
-                        idx_y_samples = self.pad + samples[:,1]
+                        idx_x_samples = self.pad + samples[:,1]
+                        idx_y_samples = self.pad + samples[:,0]
 
                         # min_x = int(self.min_x.sel(time=timeidx).values)
                         # min_y = int(self.min_y.sel(time=timeidx).values)
@@ -368,7 +368,6 @@ class SeviriDataset(Dataset):
     
     def __getitem__(self, i):
         timeidx= self.timeindices[i]
-        print(timeidx)
         subset_sarah = self.sarah.sel(time = timeidx).load()
         subset_seviri = self.seviri.sel(time = timeidx).load()
 
@@ -378,19 +377,14 @@ class SeviriDataset(Dataset):
         else:
 
             notnulls = self.sarah_nulls.nulls.sel(time=timeidx).load()
-            print(notnulls.shape)
             
 
             coords_notnull = np.argwhere(np.array(notnulls[self.pad:-self.pad, self.pad:-self.pad]))
-            print(coords_notnull.max(axis=0))
-            print(coords_notnull.min(axis=0))
 
             samples = coords_notnull[torch.randint(0, len(coords_notnull), (self.patches_per_image,))]
 
             idx_x_samples = self.pad + samples[:,1]
             idx_y_samples = self.pad + samples[:,0]
-            print(idx_x_samples)
-            print(idx_y_samples)
             # min_x = int(self.min_x.sel(time=timeidx).values)
             # min_y = int(self.min_y.sel(time=timeidx).values)
             # max_x = int(self.max_x.sel(time=timeidx).values)
@@ -736,7 +730,6 @@ if __name__ == "__main__":
     _, validtimeindex = valid_test_split(timeindex[(timeindex.year == 2017)])
     
 
-    # print(validtimeindex)
 
     dataset = SeviriDataset(
         x_vars=config.x_vars,

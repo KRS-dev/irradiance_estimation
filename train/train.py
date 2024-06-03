@@ -26,12 +26,12 @@ def get_dataloaders(config):
     
 
     sarah_nulls = xarray.open_zarr('/scratch/snx3000/kschuurm/ZARR/SARAH3_nulls.zarr')
-    timeindex = sarah_nulls.any.where(sarah_nulls.any == True, drop=True).time.values
+    timeindex = sarah_nulls['any'].where((sarah_nulls['nullssum'] > 5000).compute(), drop=True).time.values
     timeindex = pd.DatetimeIndex(timeindex)
     # timeindex = timeindex[(timeindex.hour >10) & (timeindex.hour <17)]
     traintimeindex = timeindex[(timeindex.year <= 2021)]
-    # _, validtimeindex = valid_test_split(timeindex[(timeindex.year == 2017)])
-    validtimeindex= timeindex[(timeindex.year==2022)]
+    validtimeindex = timeindex[(timeindex.year  == 2022)]
+
 
     
     train_dataset = SeviriDataset(
@@ -107,10 +107,10 @@ def main():
         "target_transform": ZeroMinMax(),
         'max_epochs': 10,
         # Compute related
-        'num_workers': 24,
+        'num_workers': 12,
         'ACCELERATOR': "gpu",
         'DEVICES': -1,
-        'NUM_NODES': 32,
+        'NUM_NODES': 16,
         'STRATEGY': "ddp",
         'PRECISION': "32",
         'EarlyStopping': {'patience':2},
@@ -124,12 +124,11 @@ def main():
         learning_rate=0.0001,
         config=config,
         metric=MeanSquaredError(),
-        zero_loss=MeanAbsoluteError(),
     )
 
     config.model = type(estimator.model).__name__
 
-    wandb_logger = WandbLogger(name='zero_loss_MAE', project="SIS_point_estimation", log_model=True)
+    wandb_logger = WandbLogger(name='Emulator', project="SIS_point_estimation", log_model=True)
 
     if rank_zero_only.rank == 0:  # only update the wandb.config on the rank 0 process
         wandb_logger.experiment.config.update(vars(config))
@@ -145,8 +144,8 @@ def main():
                                    patience=config.EarlyStopping['patience'],
                                    verbose=True,
                                    min_delta=0,
-                                   check_on_train_epoch_end=False,
-                                   log_rank_zero_only=True,)
+                                   log_rank_zero_only=True,
+                                   check_finite=True,)
 
     trainer =  Trainer(
         logger=wandb_logger,
@@ -175,7 +174,8 @@ def main():
 
     print('Best model:', mc_sarah.best_model_path)
 
-    wandb_logger.experiment.finish()
+    if rank_zero_only.rank == 0:
+        wandb_logger.experiment.finish()
     
 
 if __name__ == "__main__":
