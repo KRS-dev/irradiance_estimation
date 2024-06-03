@@ -11,13 +11,12 @@ from torchmetrics import MeanAbsoluteError, MeanSquaredError
 import wandb
 import xarray
 from dataset.dataset import ImageDataset, SeviriDataset, valid_test_split, pickle_read
-from dataset.normalization import MinMax, ZeroMinMax
+from dataset.normalization import ZeroMinMax
 from lightning.pytorch import Trainer
 from lightning.pytorch.loggers import WandbLogger
 from lightning.pytorch.utilities import rank_zero_only
 from lightning.pytorch.callbacks import EarlyStopping, ModelCheckpoint
-from models.ConvResNet_Jiang import ConvResNet, ConvResNet_batchnormMLP, ConvResNet_dropout, ConvResNet_inputCdropout, ConvResNet_BNdropout
-from models.LightningModule import LitEstimator, LitEstimatorPoint
+from models.LightningModule import LitEstimatorPoint
 from tqdm import tqdm
 
 # from pytorch_lightning.pytorch.callbacks import DeviceStatsMonitor
@@ -25,7 +24,10 @@ from types import SimpleNamespace
 
 def get_dataloaders(config):
     
-    timeindex = pd.DatetimeIndex(pickle_read('/scratch/snx3000/kschuurm/ZARR/timeindices.pkl'))
+
+    sarah_nulls = xarray.open_zarr('/scratch/snx3000/kschuurm/ZARR/SARAH3_nulls.zarr')
+    timeindex = sarah_nulls.any.where(sarah_nulls.any == True, drop=True).time.values
+    timeindex = pd.DatetimeIndex(timeindex)
     # timeindex = timeindex[(timeindex.hour >10) & (timeindex.hour <17)]
     traintimeindex = timeindex[(timeindex.year <= 2021)]
     # _, validtimeindex = valid_test_split(timeindex[(timeindex.year == 2017)])
