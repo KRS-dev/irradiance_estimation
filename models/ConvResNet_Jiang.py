@@ -70,7 +70,7 @@ class ConvResNet(nn.Module):
             nn.Linear(64, output_channels),
         )
 
-        self.relu_rect = nn.ReLU()
+        # self.relu_rect = nn.ReLU()
 
 
     def forward(self, x, x_attrs):
@@ -88,7 +88,7 @@ class ConvResNet(nn.Module):
         )  # batch_size x 256+6, Stack along the Channel dim
         x = self.mlp(x)
         
-        x = self.relu_rect(x + 1) - 1
+        # x = self.relu_rect(x + 1) - 1
         return x
 
 class ConvResNet_dropout(ConvResNet):

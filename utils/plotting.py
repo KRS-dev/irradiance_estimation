@@ -281,22 +281,41 @@ def latlon_error_plot(lat, lon, SIS_error, latlon_step=0.5):
     lat_bins =  np.arange(np.floor(torch.min(lat)), torch.max(lat) + latlon_step, latlon_step)
     lon_bins = np.arange(np.floor(torch.min(lon)), torch.max(lon) + latlon_step, latlon_step)
     mean_error, y_edge, x_edge, _ = binned_statistic_2d(lat, lon, SIS_error, bins = [lat_bins, lon_bins])
+    std_error, y_edge, x_edge, _ = binned_statistic_2d(lat, lon, SIS_error, bins = [lat_bins, lon_bins], statistic='std')
+    def rmse(x):
+        if len(x) == 0:
+            return np.nan
+        else:
+            return np.sqrt(np.mean(x**2))
+    rmse_error, y_edge, x_edge, _ = binned_statistic_2d(lat, lon, SIS_error, bins = [lat_bins, lon_bins], statistic=rmse)
+    
 
     proj = ccrs.PlateCarree()
     cmap = cm.bwr
     divnorm=colors.TwoSlopeNorm(vcenter=0.)
-    fig, ax = plt.subplots(nrows=1, ncols=1, figsize=(8, 8), subplot_kw={'projection': proj})
-    pmesh = ax.pcolormesh(x_edge, y_edge, mean_error, shading='auto', transform=proj, cmap=cmap, norm=divnorm)
-    fig.colorbar(pmesh)
-    ax.set_title('Error distribution Location')
-    ax.set_ylabel('Longitude')
-    ax.set_xlabel('Latitude')
-    ax.xaxis.set_major_locator(LongitudeLocator())
-    ax.yaxis.set_major_locator(LatitudeLocator())
-    ax.xaxis.set_major_formatter(LongitudeFormatter())
-    ax.yaxis.set_major_formatter(LatitudeFormatter())
-    ax.add_feature(cf.COASTLINE, zorder=3)
-    ax.add_feature(cf.BORDERS, zorder=3)
+    fig, axes = plt.subplots(nrows=1, ncols=3, figsize=(24, 8), subplot_kw={'projection': proj})
+
+    pmesh = axes[0].pcolormesh(x_edge, y_edge, mean_error, shading='auto', transform=proj, cmap=cmap, norm=divnorm)
+    axes[0].set_title('MBE')
+    fig.colorbar(pmesh, ax=axes[0], orientation='vertical', label='[$w/m^2$]')
+
+    pmesh = axes[1].pcolormesh(x_edge, y_edge, rmse_error, shading='auto', transform=proj, cmap='plasma')
+    axes[1].set_title('RMSE')
+    fig.colorbar(pmesh, ax=axes[1], orientation='vertical', label='[$w/m^2$]')
+
+    pmesh = axes[2].pcolormesh(x_edge, y_edge, std_error, shading='auto', transform=proj, cmap='plasma')
+    axes[2].set_title('STD')
+    fig.colorbar(pmesh, ax=axes[2], orientation='vertical', label='[-]')
+
+    for ax in axes:
+        ax.set_ylabel('Longitude')
+        ax.set_xlabel('Latitude')
+        ax.xaxis.set_major_locator(LongitudeLocator())
+        ax.yaxis.set_major_locator(LatitudeLocator())
+        ax.xaxis.set_major_formatter(LongitudeFormatter())
+        ax.yaxis.set_major_formatter(LatitudeFormatter())
+        ax.add_feature(cf.COASTLINE, zorder=3)
+        ax.add_feature(cf.BORDERS, zorder=3)
 
     return fig, pmesh
 

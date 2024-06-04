@@ -17,11 +17,11 @@ import matplotlib.pyplot as plt
 
 from utils.etc import benchmark
 
+import dask
+dask.config.set(scheduler='synchronous')
+
 def create_singleImageDataset(**kwargs):
     return SingleImageDataset(**kwargs)
-
-def create_singleImageDataset_generator(**kwargs):
-    return SingleImageDataset_generator(**kwargs)
 
 def pickle_write(obj, fn):
     with open(fn, 'wb') as pickle_file:
@@ -133,7 +133,7 @@ class ImageDataset(Dataset):
         )
         self.dem = xarray.open_zarr("/scratch/snx3000/kschuurm/ZARR/DEM.zarr").fillna(0)
 
-        self.sarah = xarray.open_zarr("/scratch/snx3000/kschuurm/ZARR/SARAH3.zip").channel_data.to_dataset(dim='channel') 
+        self.sarah = xarray.open_zarr("/scratch/snx3000/kschuurm/ZARR/SARAH3.zarr").channel_data.to_dataset(dim='channel') 
      
         self.seviri = xarray.merge(
             [self.seviri, self.dem], join="exact"
@@ -213,7 +213,7 @@ class ImageDataset(Dataset):
             target_transform=self.target_transform,
             dtype=self.dtype,
         )
-        dataset = self._pool.submit(create_singleImageDataset_generator, **d)
+        dataset = self._pool.submit(create_singleImageDataset, **d)
         return dataset
 
     def __getitem__(self, i):
@@ -238,20 +238,14 @@ class SeviriDataset(Dataset):
         x_vars,
         x_features,
         patch_size,
-        transform,
-        target_transform,
-        timeindices=None,
+        transform=None,
+        target_transform=None,
         patches_per_image =100,
         dtype=torch.float16,
-        seed=None,
+        validation=False,
         rng=None
     ):
 
-        self.seed = seed
-        if self.seed is not None:
-            self.rng = torch.Generator().manual_seed(self.seed)
-        else:
-            self.rng = rng # set random generator for all datasets in ddp
 
         self.x_features = x_features.copy()
         self.x_vars = x_vars.copy()
@@ -260,6 +254,8 @@ class SeviriDataset(Dataset):
         self.target_transform = target_transform
         self.patches_per_image = patches_per_image
         self.dtype=dtype
+        self.validation = validation
+        self.rng = rng # set random generator for all datasets in ddp
 
         self.seviri = (
             xarray.open_zarr(
@@ -300,108 +296,86 @@ class SeviriDataset(Dataset):
             with open('/scratch/snx3000/kschuurm/ZARR/DEM.pkl', 'rb') as pickle_file:
                 self.dem = pickle.load(pickle_file) 
 
-        self.sarah = xarray.open_zarr("/scratch/snx3000/kschuurm/ZARR/SARAH3.zip")
+        self.sarah = xarray.open_zarr("/scratch/snx3000/kschuurm/ZARR/SARAH3.zarr")
 
-        self.sarah_nulls = xarray.open_zarr('/scratch/snx3000/kschuurm/ZARR/SARAH3_nulls.zarr')
-
-    
         sizes= self.seviri.sizes
         self.H = sizes['lat']
         self.W = sizes['lon']
-
         self.pad = int(np.floor(patch_size['x']/2))
 
-        # timeindices_sarah, self.max_y, self.max_x, self.min_y, self.min_x  = get_pickled_sarah_bnds()
-        timeindices_sarah = self.sarah_nulls['any'].where((self.sarah_nulls['nullssum'] > 5000).compute(), drop=True).time.values
 
-        if timeindices is not None:
-            self.timeindices = timeindices
+        self.sarah_nulls = xarray.open_zarr('/scratch/snx3000/kschuurm/ZARR/SARAH3_nulls.zarr')
+        self.sarah_nulls = self.sarah_nulls.where((self.sarah_nulls['nullssum'] > 100000).compute(), drop=True)
+
+        if validation is True:
+            self.timeindices  = self.sarah_nulls.time[self.sarah_nulls.time.dt.year == 2022].values
         else:
-            self.timeindices = timeindices_sarah
+            self.timeindices  = self.sarah_nulls.time[self.sarah_nulls.time.dt.year < 2022].values
 
-
-        self.timeindices = np.array(list(set(self.timeindices.values).intersection(set(self.seviri.time.values))))
+        self.timeindices = np.sort(np.array(list(set(self.timeindices).intersection(set(self.seviri.time.values)))))
         
-        self.timeindices = self.timeindices[torch.randperm(len(self.timeindices))]
+        if validation is False:
+            self.timeindices = self.timeindices[torch.randperm(len(self.timeindices), generator=self.rng)]
 
-        if self.seed is not None:
-            with benchmark('sampler setup'):
-                self.idx_x_sampler = []
-                self.idx_y_sampler = []
-
-                if os.path.exists('/scratch/snx3000/kschuurm/ZARR/idx_x_sampler.pkl') and os.path.exists('/scratch/snx3000/kschuurm/ZARR/idx_y_sampler.pkl'):
-                    self.idx_x_sampler = pickle_read('/scratch/snx3000/kschuurm/ZARR/idx_x_sampler.pkl')
-                    self.idx_y_sampler = pickle_read('/scratch/snx3000/kschuurm/ZARR/idx_y_sampler.pkl')
-                else:
-                    for timeidx in tqdm(self.timeindices):
+        if validation is True:
+            if os.path.exists('/scratch/snx3000/kschuurm/ZARR/idx_x_sampler.pkl') and os.path.exists('/scratch/snx3000/kschuurm/ZARR/idx_y_sampler.pkl'):
+                self.idx_x_sampler = pickle_read('/scratch/snx3000/kschuurm/ZARR/idx_x_sampler.pkl')
+                self.idx_y_sampler = pickle_read('/scratch/snx3000/kschuurm/ZARR/idx_y_sampler.pkl')
+            else:
+                self.idx_x_sampler = {}
+                self.idx_y_sampler = {}
+                for timeidx in tqdm(self.timeindices, desc='sampler setup', total=len(self.timeindices)):
 
 
-                        notnulls = self.sarah_nulls.nulls.sel(time=timeidx).load()
+                    notnulls = self.sarah_nulls.nulls.sel(time=timeidx).load()
 
-                        coords_notnull = np.argwhere(np.array(notnulls[self.pad:-self.pad, self.pad:-self.pad]))
-                        samples = coords_notnull[torch.randint(0, len(coords_notnull), (self.patches_per_image,), dtype=torch.int32, generator=self.rng)]
-                        idx_x_samples = self.pad + samples[:,1]
-                        idx_y_samples = self.pad + samples[:,0]
+                    coords_notnull = np.argwhere(np.array(notnulls[self.pad:-self.pad, self.pad:-self.pad]))
+                    samples = coords_notnull[torch.randint(0, len(coords_notnull), (self.patches_per_image,), dtype=torch.int32, generator=self.rng)]
+                    idx_x_samples = self.pad + samples[:,1]
+                    idx_y_samples = self.pad + samples[:,0]
 
-                        # min_x = int(self.min_x.sel(time=timeidx).values)
-                        # min_y = int(self.min_y.sel(time=timeidx).values)
-                        # max_x = int(self.max_x.sel(time=timeidx).values)
-                        # max_y = int(self.max_y.sel(time=timeidx).values)
-                        # idx_x_samples = torch.randint(min_x + self.pad, 
-                        #                             max_x-self.pad, 
-                        #                             (self.patches_per_image,), 
-                        #                             dtype=torch.int32, 
-                        #                             generator=self.rng)
-                        # idx_y_samples = torch.randint(min_y + self.pad, 
-                        #                             max_y-self.pad, 
-                        #                             (self.patches_per_image,), 
-                        #                             dtype=torch.int32, 
-                        #                             generator=self.rng)
-                        self.idx_x_sampler.append(idx_x_samples)
-                        self.idx_y_sampler.append(idx_y_samples)
-                    
-                    pickle_write(self.idx_x_sampler, '/scratch/snx3000/kschuurm/ZARR/idx_x_sampler.pkl')
-                    pickle_write(self.idx_y_sampler, '/scratch/snx3000/kschuurm/ZARR/idx_y_sampler.pkl')
+                    # min_x = int(self.min_x.sel(time=timeidx).values)
+                    # min_y = int(self.min_y.sel(time=timeidx).values)
+                    # max_x = int(self.max_x.sel(time=timeidx).values)
+                    # max_y = int(self.max_y.sel(time=timeidx).values)
+                    # idx_x_samples = torch.randint(min_x + self.pad, 
+                    #                             max_x-self.pad, 
+                    #                             (self.patches_per_image,), 
+                    #                             dtype=torch.int32, 
+                    #                             generator=self.rng)
+                    # idx_y_samples = torch.randint(min_y + self.pad, 
+                    #                             max_y-self.pad, 
+                    #                             (self.patches_per_image,), 
+                    #                             dtype=torch.int32, 
+                    #                             generator=self.rng)
+
+                    self.idx_x_sampler[timeidx] = idx_x_samples
+                    self.idx_y_sampler[timeidx] = idx_y_samples
+                
+                pickle_write(self.idx_x_sampler, '/scratch/snx3000/kschuurm/ZARR/idx_x_sampler.pkl')
+                pickle_write(self.idx_y_sampler, '/scratch/snx3000/kschuurm/ZARR/idx_y_sampler.pkl')
 
     def __len__(self):
         return len(self.timeindices)
     
     def __getitem__(self, i):
         timeidx= self.timeindices[i]
-        subset_sarah = self.sarah.sel(time = timeidx).load()
         subset_seviri = self.seviri.sel(time = timeidx).load()
+        subset_sarah = self.sarah.sel(time = timeidx).load()
 
-        if self.seed is not None:
-            idx_x_samples = self.idx_x_sampler[i]
-            idx_y_samples = self.idx_y_sampler[i]
+        if self.validation is not None:
+            idx_x_samples = self.idx_x_sampler[timeidx]
+            idx_y_samples = self.idx_y_sampler[timeidx]
         else:
 
             notnulls = self.sarah_nulls.nulls.sel(time=timeidx).load()
-            
-
             coords_notnull = np.argwhere(np.array(notnulls[self.pad:-self.pad, self.pad:-self.pad]))
 
-            samples = coords_notnull[torch.randint(0, len(coords_notnull), (self.patches_per_image,))]
+            samples = coords_notnull[torch.randint(0, len(coords_notnull), (self.patches_per_image,), generator=self.rng)]
 
             idx_x_samples = self.pad + samples[:,1]
             idx_y_samples = self.pad + samples[:,0]
-            # min_x = int(self.min_x.sel(time=timeidx).values)
-            # min_y = int(self.min_y.sel(time=timeidx).values)
-            # max_x = int(self.max_x.sel(time=timeidx).values)
-            # max_y = int(self.max_y.sel(time=timeidx).values)
-            # min_x =0
-            # min_y = 0
-            # max_x = 736-1
-            # max_y = 658-1
-            # idx_x_samples = torch.randint(min_x + self.pad, 
-            #                             max_x-self.pad, 
-            #                             (self.patches_per_image,), 
-            #                             dtype=torch.int32,)
-            # idx_y_samples = torch.randint(min_y + self.pad, 
-            #                             max_y-self.pad, 
-            #                             (self.patches_per_image,), 
-            #                             dtype=torch.int32,)
-        
+
         idx_x_da = xarray.DataArray(idx_x_samples, dims=['z'])
         idx_y_da = xarray.DataArray(idx_y_samples, dims=['z'])
 
@@ -476,12 +450,15 @@ class SeviriDataset(Dataset):
 
         if X.isnan().any():
             print("nan in X")
+            print(timeidx)
             print(X)
         if x.isnan().any():
             print("nan in x")
+            print(timeidx)
             print(x)
         if y.isnan().any():
             print("nan in y")
+            print(timeidx)
             print(y)
 
         if (y == -1).any():
@@ -724,10 +701,10 @@ if __name__ == "__main__":
     config = SimpleNamespace(**config)
 
 
-    timeindex = pd.DatetimeIndex(pickle_read('/scratch/snx3000/kschuurm/ZARR/timeindices.pkl'))
-    timeindex = timeindex[(timeindex.hour >10) & (timeindex.hour <17)]
-    traintimeindex = timeindex[(timeindex.year == 2016)]
-    _, validtimeindex = valid_test_split(timeindex[(timeindex.year == 2017)])
+    # timeindex = pd.DatetimeIndex(pickle_read('/scratch/snx3000/kschuurm/ZARR/timeindices.pkl'))
+    # timeindex = timeindex[(timeindex.hour >10) & (timeindex.hour <17)]
+    # traintimeindex = timeindex[(timeindex.year == 2016)]
+    # _, validtimeindex = valid_test_split(timeindex[(timeindex.year == 2017)])
     
 
 
@@ -736,13 +713,13 @@ if __name__ == "__main__":
         y_vars=config.y_vars,
         x_features=config.x_features,
         patch_size=config.patch_size,
-        timeindices=validtimeindex,
         transform=config.transform,
         target_transform=config.target_transform,
+        validation=True,
     )
 
 
-    dl = DataLoader(dataset, batch_size=None, shuffle=False, num_workers=4,)
+    dl = DataLoader(dataset, batch_size=None, shuffle=False, num_workers=0,)
 
     for i, batch in enumerate(tqdm(dl)):
         # print(batch)

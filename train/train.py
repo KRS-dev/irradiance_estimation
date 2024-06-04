@@ -19,14 +19,13 @@ from lightning.pytorch.callbacks import EarlyStopping, ModelCheckpoint
 from models.LightningModule import LitEstimatorPoint
 from tqdm import tqdm
 
-# from pytorch_lightning.pytorch.callbacks import DeviceStatsMonitor
 from types import SimpleNamespace
 
 def get_dataloaders(config):
     
 
     sarah_nulls = xarray.open_zarr('/scratch/snx3000/kschuurm/ZARR/SARAH3_nulls.zarr')
-    timeindex = sarah_nulls['any'].where((sarah_nulls['nullssum'] > 5000).compute(), drop=True).time.values
+    timeindex = sarah_nulls['any'].where((sarah_nulls['nullssum'] > 100000).compute(), drop=True).time.values
     timeindex = pd.DatetimeIndex(timeindex)
     # timeindex = timeindex[(timeindex.hour >10) & (timeindex.hour <17)]
     traintimeindex = timeindex[(timeindex.year <= 2021)]
@@ -42,7 +41,6 @@ def get_dataloaders(config):
         transform=config.transform,
         target_transform=config.target_transform,
         patches_per_image=config.batch_size,
-        timeindices=traintimeindex,
     )
     valid_dataset = SeviriDataset(
         x_vars=config.x_vars,
@@ -52,8 +50,7 @@ def get_dataloaders(config):
         transform=config.transform,
         target_transform=config.target_transform,
         patches_per_image=config.batch_size,
-        timeindices=validtimeindex,
-        seed=0,
+        validation=True,
     )
 
     train_dataloader = DataLoader(train_dataset, shuffle=True, batch_size=None, num_workers=config.num_workers)
@@ -105,16 +102,16 @@ def main():
         "x_features": ["dayofyear", "lat", "lon", 'SZA', "AZI",],
         "transform": ZeroMinMax(),
         "target_transform": ZeroMinMax(),
-        'max_epochs': 10,
+        'max_epochs': 5,
         # Compute related
-        'num_workers': 12,
-        'ACCELERATOR': "gpu",
+        'num_workers': 24,
+        'ACCELERATOR': "gpu",   
         'DEVICES': -1,
         'NUM_NODES': 16,
         'STRATEGY': "ddp",
         'PRECISION': "32",
         'EarlyStopping': {'patience':2},
-        'ModelCheckpoint':{'every_n_epochs':1, 'save_top_k':1},
+        'ModelCheckpoint':{'every_n_epochs':1, 'save_top_k':3},
         'ckpt_fn': None, #'/scratch/snx3000/kschuurm/irradiance_estimation/train/SIS_point_estimation_groundstation/pl86of1b/checkpoints/epoch=4-val_loss=0.01630.ckpt',
     }
     config = SimpleNamespace(**config)
