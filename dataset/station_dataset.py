@@ -9,6 +9,7 @@ import xarray
 import numpy as np
 from tqdm import tqdm
 from utils.etc import benchmark
+from utils.satellite_position import get_satellite_look_angles, coscattering_angle
 
 class GroundstationDataset(Dataset):
     def __init__(self, zarr_store, y_vars, x_vars, x_features, 
@@ -72,30 +73,26 @@ class GroundstationDataset(Dataset):
         self.data['channel'] = nms_trans
 
         self.dem = xarray.open_zarr('/scratch/snx3000/kschuurm/ZARR/DEM.zarr') \
-                .sel(lat=self.data.lat, lon=self.data.lon)
-
-        xlen = len(self.data.lat)
+                .sel(lat=self.data.y, lon=self.data.x)
+        
+        xlen = len(self.data.y)
         imiddle = int(np.floor(xlen/2))
         phalf = int(np.floor(patch_size/2))
 
-        self.dem = self.dem.isel(lat=slice(imiddle-phalf, imiddle+phalf +1),
-                                lon=slice(imiddle-phalf, imiddle+phalf +1))
-        self.data = self.data.isel(lat=slice(imiddle-phalf, imiddle+phalf +1),
-                                lon=slice(imiddle-phalf, imiddle+phalf +1))
+        self.dem = self.dem.isel(y=slice(imiddle-phalf, imiddle+phalf +1),
+                                x=slice(imiddle-phalf, imiddle+phalf +1))
+        self.data = self.data.isel(y=slice(imiddle-phalf, imiddle+phalf +1),
+                                x=slice(imiddle-phalf, imiddle+phalf +1))
 
         if 'dayofyear' in x_features:
-            self.data['dayofyear'] = self.data.time.dt.dayofyear
+            dayofyear = self.data.time.dt.dayofyear
 
-        if 'lat' in x_features:
-            self.data = self.data.rename_dims({
-                'lat':'lat_',
-                'lon':'lon_'
-            }).rename_vars({
-                'lat':'lat_',
-                'lon':'lon_',
-                'lat_station':'lat',
-                'lon_station':'lon',
-            })
+        lat_station = self.data.lat.values
+        lon_station = self.data.lon.values
+
+        
+        if 'sat_azi' in x_features:
+            sat_azi = 
 
 
         x_vars = [v for v in self.x_vars if v in self.data.channel.values]
@@ -126,11 +123,11 @@ class GroundstationDataset(Dataset):
         y = self.y[i]
 
         if self.transform:
-            self.X = self.transform(X, self.x_vars)
-            self.x = self.transform(x, self.x_features)
+            X = self.transform(X.unsqueeze(0), self.x_vars).squeeze()
+            x = self.transform(x.unsqueeze(0), self.x_features).squeeze()
             
         if self.target_transform:
-            self.y = self.target_transform(y, self.y_vars)
+            y = self.target_transform(y.unsqueeze(0), self.y_vars).squeeze()
         return X, x, y
     
 

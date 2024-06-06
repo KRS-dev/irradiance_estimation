@@ -35,7 +35,8 @@ class LitEstimatorPoint(L.LightningModule):
         self.transform = config.transform
         self.y_vars = config.y_vars
         self.x_features = config.x_features
-        self.metric = metric
+        self.train_metric = MeanSquaredError()
+        self.valid_metric = MeanSquaredError()
         self.other_metrics = MetricCollection([MeanMetric(), MeanAbsoluteError(), R2Score()])
         self.y = []
         self.y_hat =[]
@@ -54,7 +55,7 @@ class LitEstimatorPoint(L.LightningModule):
     def training_step(self, batch, batch_idx, dataloader_idx=0):
         X, x, y = batch
         y_hat = self.forward(X, x)
-        loss = self.metric(y_hat, y)
+        loss = self.train_metric(y_hat, y)
 
         if self.parameter_loss:
             if self.reference_parameters is None:
@@ -64,7 +65,7 @@ class LitEstimatorPoint(L.LightningModule):
             par2_flat = torch.cat([par.flatten() for par in self.reference_parameters if par.requires_grad])
             par_loss = self.alpha*self.parameter_metric(par1_flat.to(self.device), par2_flat.to(self.device))
             loss += par_loss
-            self.log('par_loss', self.parameter_metric, logger=True, prog_bar=True)
+            self.log('par_loss', self.parameter_metric, logger=True, on_epoch=True, on_step=True)
 
         if self.zero_loss is not None:
             zero_idx = y_hat == -1
@@ -73,18 +74,18 @@ class LitEstimatorPoint(L.LightningModule):
             # a[~zero_idx] = 0
             # b[~zero_idx] = 0
             zero_loss = self.zero_loss(a[zero_idx],b[zero_idx])
-            self.log('zero_loss', self.zero_loss, logger=True, prog_bar=True)
+            self.log('zero_loss', self.zero_loss, logger=True, on_step=True)
             loss += zero_loss
 
-        self.log("loss", self.metric, logger=True, on_epoch=True, prog_bar=True)
+        self.log("loss", self.train_metric, logger=True, on_epoch=True, on_step=True)
         return loss
 
     def validation_step(self, batch, batch_idx, dataloader_idx=0):
         X, x, y = batch
         y_hat = self.forward(X, x)
         y_hat[y_hat < -1] = -1
-        loss = self.metric(y_hat, y)
-        self.log("val_loss", self.metric, on_epoch=True, logger=True, prog_bar=True, sync_dist=True)
+        loss = self.valid_metric(y_hat, y)
+        self.log("val_loss", self.valid_metric, on_epoch=True, logger=True, prog_bar=True, sync_dist=True)
         self.y.append(y)
         self.y_hat.append(y_hat)
         self.x_attr.append(batch[1])
@@ -94,12 +95,13 @@ class LitEstimatorPoint(L.LightningModule):
         X, x, y = batch
         y_hat = self.forward(X, x)
         y_hat[y_hat < -1] = -1
-        loss = self.metric(y_hat, y)
-        self.log("test_loss", self.metric, on_epoch=True, logger=True, sync_dist=True)
+        loss = self.valid_metric(y_hat, y)
+        self.log("test_loss", self.valid_metric, on_epoch=True, logger=True, sync_dist=True)
         self.y.append(y)
         self.y_hat.append(y_hat)
         self.x_attr.append(batch[1])
         return loss
+
     
     def on_test_epoch_start(self):
         self.y = []
@@ -161,6 +163,8 @@ class LitEstimatorPoint(L.LightningModule):
     def predict_step(self, batch, batch_idx):
         X, x, y = batch
         y_hat = self.forward(X, x)
+        y_hat[y_hat < -1] = -1
+
         return y_hat, y, x
 
     def on_validation_epoch_end(self):
@@ -185,12 +189,12 @@ class LitEstimatorPoint(L.LightningModule):
         self.log_dict(self.other_metrics, logger=True, sync_dist=True)
         
         world_size = self.trainer.world_size
-        x_attr_all = self.all_gather(x_attr).view(world_size*x_attr.shape[0], *x_attr.shape[1:]).cpu()
-        y_all = self.all_gather(y).view(world_size*y.shape[0], *y.shape[1:]).cpu()
-        y_hat_all = self.all_gather(y_hat).view(world_size*y_hat.shape[0], *y_hat.shape[1:]).cpu()
-        SIS_error_all = self.all_gather(SIS_error).view(world_size*SIS_error.shape[0], *SIS_error.shape[1:]).cpu()
+        x_attr_all = self.all_gather(x_attr).view(world_size*x_attr.shape[0], *x_attr.shape[1:]).cpu().squeeze()
+        y_all = self.all_gather(y).view(world_size*y.shape[0], *y.shape[1:]).cpu().squeeze()
+        y_hat_all = self.all_gather(y_hat).view(world_size*y_hat.shape[0], *y_hat.shape[1:]).cpu().squeeze()
+        SIS_error_all = self.all_gather(SIS_error).view(world_size*SIS_error.shape[0], *SIS_error.shape[1:]).cpu().squeeze()
         
-        if self.trainer.is_global_zero:
+        if self.trainer.is_global_zero: 
             
 
             if 'SZA' in self.x_features and 'dayofyear' in self.x_features:
@@ -198,7 +202,7 @@ class LitEstimatorPoint(L.LightningModule):
                 dayofyear = x_attr_all[:, self.x_features.index('dayofyear')]
 
                 SZA_fig, _ = SZA_error_plot(SZA, SIS_error_all)
-                dayofyear_fig, _ = dayofyear_error_plot(dayofyear.cpu(), SIS_error_all.cpu())
+                dayofyear_fig, _ = dayofyear_error_plot(dayofyear, SIS_error_all)
                 if isinstance(self.logger, WandbLogger):
                     self.logger.log_image(key="y_hat - y, distribution SZA and dayofyear", images=[SZA_fig, dayofyear_fig])
 

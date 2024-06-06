@@ -231,7 +231,7 @@ def SZA_error_plot(SZA, SIS_error):
     bins =  np.arange(0, 9/16*np.pi, np.pi/16)
     sza_bins_labels = np.rad2deg(bins)
     bin_indices = np.digitize(SZA.cpu(),bins)
-    SZAs_errors = [SIS_error[bin_indices == i] for i in range(len(bins))]
+    SZAs_errors = [SIS_error[bin_indices == i].squeeze() for i in range(len(bins))]
 
 
     fig, ax = plt.subplots(nrows=1, ncols=1, figsize=(7, 4))

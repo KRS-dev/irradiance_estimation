@@ -240,7 +240,7 @@ class SeviriDataset(Dataset):
         patch_size,
         transform=None,
         target_transform=None,
-        patches_per_image =100,
+        patches_per_image =2048,
         dtype=torch.float16,
         validation=False,
         rng=None
@@ -363,7 +363,7 @@ class SeviriDataset(Dataset):
         subset_seviri = self.seviri.sel(time = timeidx).load()
         subset_sarah = self.sarah.sel(time = timeidx).load()
 
-        if self.validation is not None:
+        if self.validation is True:
             idx_x_samples = self.idx_x_sampler[timeidx]
             idx_y_samples = self.idx_y_sampler[timeidx]
         else:
@@ -672,7 +672,7 @@ if __name__ == "__main__":
     from types import SimpleNamespace
 
     config = {
-        "batch_size": 512,
+        "batch_size": 2048,
         "patch_size": {
             "x": 15,
             "y": 15,
@@ -715,6 +715,7 @@ if __name__ == "__main__":
         patch_size=config.patch_size,
         transform=config.transform,
         target_transform=config.target_transform,
+        patches_per_image=config.batch_size,
         validation=True,
     )
 
@@ -724,4 +725,5 @@ if __name__ == "__main__":
     for i, batch in enumerate(tqdm(dl)):
         # print(batch)
         if i> 100:
+            print(batch[0].shape)
             break

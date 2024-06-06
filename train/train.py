@@ -21,18 +21,11 @@ from tqdm import tqdm
 
 from types import SimpleNamespace
 
+os.environ["WANDB__SERVICE_WAIT"] = "30"
+
 def get_dataloaders(config):
     
 
-    sarah_nulls = xarray.open_zarr('/scratch/snx3000/kschuurm/ZARR/SARAH3_nulls.zarr')
-    timeindex = sarah_nulls['any'].where((sarah_nulls['nullssum'] > 100000).compute(), drop=True).time.values
-    timeindex = pd.DatetimeIndex(timeindex)
-    # timeindex = timeindex[(timeindex.hour >10) & (timeindex.hour <17)]
-    traintimeindex = timeindex[(timeindex.year <= 2021)]
-    validtimeindex = timeindex[(timeindex.year  == 2022)]
-
-
-    
     train_dataset = SeviriDataset(
         x_vars=config.x_vars,
         y_vars=config.y_vars,
@@ -102,7 +95,7 @@ def main():
         "x_features": ["dayofyear", "lat", "lon", 'SZA', "AZI",],
         "transform": ZeroMinMax(),
         "target_transform": ZeroMinMax(),
-        'max_epochs': 5,
+        'max_epochs': 8,
         # Compute related
         'num_workers': 24,
         'ACCELERATOR': "gpu",   
@@ -145,6 +138,7 @@ def main():
                                    check_finite=True,)
 
     trainer =  Trainer(
+        # fast_dev_run=True,
         logger=wandb_logger,
         accelerator=config.ACCELERATOR,
         devices=config.DEVICES,
