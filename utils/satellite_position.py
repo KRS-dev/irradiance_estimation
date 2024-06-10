@@ -3,7 +3,7 @@ import numpy as np
 import torch
 
 
-def get_satellite_look_angles(phi, theta, degree=False) -> Tuple[float, float]: # lat, lon
+def get_satellite_look_angles(phi, theta, degree=False, dtype=torch.float32) -> torch.Tensor: # lat, lon
     """Calculate the azimuth and solar zenith angles of the SEVIR satellite from a given point on the Earth
     Uses spherical geometry to approximate the angles.
     Method based on the paper: "Determination of Look Angles to Geostationary Communication Satellites" by T. Soler, DOI: 10.1061/(ASCE)0733-9453(1994)120:3(115)
@@ -28,7 +28,7 @@ def get_satellite_look_angles(phi, theta, degree=False) -> Tuple[float, float]: 
     R = 6371*10**3 # m
     r = 35800*10**3  + R# m Geostationary orbit height
     theta_seviri = 0 # degree Longitude orbit Seviri
-
+    
     if isinstance(phi, torch.Tensor) and isinstance(theta, torch.Tensor):
         if phi.shape != theta.shape:
             raise ValueError("phi and theta must have the same shape")
@@ -51,7 +51,6 @@ def get_satellite_look_angles(phi, theta, degree=False) -> Tuple[float, float]: 
 
     d = r*(1 + (R/r)**2 - 2*R/r*torch.cos(gamma))**0.5
     z = torch.arcsin((r/d)*torch.sin(gamma))
-    print(z)
 
     v = torch.pi/2 - z
     
@@ -94,10 +93,11 @@ def get_satellite_look_angles(phi, theta, degree=False) -> Tuple[float, float]: 
         v = torch.rad2deg(v)
 
 
-    return alpha, z # azi, sza
+    return alpha.to(dtype), z.to(dtype) # azi, sza
 
 
-def coscattering_angle(alpha_sat:float, z_sat:float, alpha_sun:float, z_sun:float, degree=False) -> float:
+def coscattering_angle(alpha_sat, z_sat, alpha_sun, z_sun, 
+                       degree=False, dtype=torch.float32) -> torch.Tensor:
     """Calculates the scattering angle between the satellite and the sun
 
     Parameters
@@ -115,14 +115,17 @@ def coscattering_angle(alpha_sat:float, z_sat:float, alpha_sun:float, z_sun:floa
 
     Returns
     -------
-    float
+    torch.tensor
         coscattering angle in radians or degrees
     """
 
     if isinstance(alpha_sat, (int, float)):
         alpha_sat = torch.tensor([alpha_sat])
+    if isinstance(z_sat, (int, float)):
         z_sat = torch.tensor([z_sat])
+    if isinstance(alpha_sun, (int, float)):
         alpha_sun = torch.tensor([alpha_sun])
+    if isinstance(z_sun, (int, float)):
         z_sun = torch.tensor([z_sun])
     
     if isinstance(alpha_sat, list):
@@ -131,8 +134,15 @@ def coscattering_angle(alpha_sat:float, z_sat:float, alpha_sun:float, z_sun:floa
         alpha_sun = torch.tensor(alpha_sun)
         z_sun = torch.tensor(z_sun)
 
-    assert alpha_sat.shape == z_sat.shape == alpha_sun.shape == z_sun.shape, "Input arrays must have the same shape"
+    alpha_sat = alpha_sat.to(dtype)
+    z_sat = z_sat.to(dtype)
+    alpha_sun = alpha_sun.to(dtype)
+    z_sun = z_sun.to(dtype)
 
+    assert alpha_sat.shape == z_sat.shape and alpha_sun.shape == z_sun.shape, "Input arrays must have the same shape"
+    
+    if alpha_sat.shape != alpha_sun.shape:
+        assert len(alpha_sat) == 1 or len(alpha_sun) == 1, "Only one of the input arrays can have multiple elements if they are not the same shape."
 
     if degree:
         alpha_sat = torch.deg2rad(alpha_sat)
@@ -141,19 +151,21 @@ def coscattering_angle(alpha_sat:float, z_sat:float, alpha_sun:float, z_sun:floa
         z_sun = torch.deg2rad(z_sun)
 
 
-    vec_sat = torch.tensor(
+    vec_sat = torch.stack(
         [torch.sin(z_sat)*torch.sin(alpha_sat),
          torch.sin(z_sat)*torch.cos(alpha_sat),
-         torch.cos(z_sat)]
-    )
-    vec_sun = torch.tensor(
+         torch.cos(z_sat)],
+         dim=0,
+    ).squeeze().view(3,-1)
+
+    vec_sun = torch.stack(
         [torch.sin(z_sun)*torch.sin(alpha_sun),
          torch.sin(z_sun)*torch.cos(alpha_sun),
-         torch.cos(z_sun)]
-    )
+         torch.cos(z_sun)], 
+         dim=0,
+    ).squeeze().view(3,-1)
 
-    print(vec_sun.shape)
-    dot_product = torch.einsum('ij,ij->j', vec_sat, vec_sun) # elementwise dot product
+    dot_product = torch.einsum('i...,i...->...', vec_sat, vec_sun) # elementwise dot product
     theta = torch.arccos(dot_product)
 
     if degree:

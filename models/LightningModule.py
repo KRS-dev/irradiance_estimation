@@ -251,7 +251,7 @@ class LitEstimatorPoint(L.LightningModule):
             "optimizer": optimizer,
             "lr_scheduler": {
                 "scheduler": reduce_lr,
-                "monitor": "val_loss",
+                "monitor": "val_loss/dataloader_idx_0",
                 "frequency": 1,
             },
         }

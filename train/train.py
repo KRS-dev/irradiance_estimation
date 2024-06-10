@@ -95,7 +95,7 @@ def main():
         "x_features": ["dayofyear", "lat", "lon", 'SZA', "AZI",],
         "transform": ZeroMinMax(),
         "target_transform": ZeroMinMax(),
-        'max_epochs': 8,
+        'max_epochs': 14,
         # Compute related
         'num_workers': 24,
         'ACCELERATOR': "gpu",   
@@ -103,25 +103,27 @@ def main():
         'NUM_NODES': 16,
         'STRATEGY': "ddp",
         'PRECISION': "32",
-        'EarlyStopping': {'patience':2},
+        'EarlyStopping': {'patience':4},
         'ModelCheckpoint':{'every_n_epochs':1, 'save_top_k':3},
-        'ckpt_fn': None, #'/scratch/snx3000/kschuurm/irradiance_estimation/train/SIS_point_estimation_groundstation/pl86of1b/checkpoints/epoch=4-val_loss=0.01630.ckpt',
+        'ckpt_fn': '/scratch/snx3000/kschuurm/irradiance_estimation/train/SIS_point_estimation/m4ms61hn/checkpoints/last.ckpt',
     }
     config = SimpleNamespace(**config)
 
 
     estimator = LitEstimatorPoint(
-        learning_rate=0.0001,
+        learning_rate=0.000001,
         config=config,
         metric=MeanSquaredError(),
     )
 
     config.model = type(estimator.model).__name__
 
-    wandb_logger = WandbLogger(name='Emulator', project="SIS_point_estimation", log_model=True)
+    # wandb_logger = WandbLogger(name='Emulator', project="SIS_point_estimation", log_model=True)
+    wandb_logger = WandbLogger(name='Emulator', project="SIS_point_estimation", id='m4ms61hn', resume='must')
 
-    if rank_zero_only.rank == 0:  # only update the wandb.config on the rank 0 process
-        wandb_logger.experiment.config.update(vars(config))
+
+    # if rank_zero_only.rank == 0:  # only update the wandb.config on the rank 0 process
+    #     wandb_logger.experiment.config.update(vars(config))
 
     mc_sarah = ModelCheckpoint(
         monitor='val_loss', 
@@ -142,20 +144,16 @@ def main():
         logger=wandb_logger,
         accelerator=config.ACCELERATOR,
         devices=config.DEVICES,
-        min_epochs=1,
         max_epochs=config.max_epochs,
         precision=config.PRECISION,
         log_every_n_steps=500,
         strategy=config.STRATEGY,
         num_nodes=config.NUM_NODES,
         callbacks=[ mc_sarah, early_stopping],
-        max_time="00:02:00:00"
+        max_time="00:02:00:00",
+        ckpt_path=config.ckpt_fn,
     )
 
-
-    if config.ckpt_fn is not None:
-        ch = torch.load(config.ckpt_fn, map_location=torch.device('cuda'))
-        estimator.load_state_dict(ch['state_dict'])
 
     train_dataloader, val_dataloader = get_dataloaders(config)
 

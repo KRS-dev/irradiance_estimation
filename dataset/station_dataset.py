@@ -15,7 +15,7 @@ class GroundstationDataset(Dataset):
     def __init__(self, zarr_store, y_vars, x_vars, x_features, 
                  patch_size=15, transform=None, target_transform=None, 
                  subset_year=None, binned=False, bin_size=50, sarah_idx_only=False,
-                 SZA_max=85):
+                 SZA_max=85, dtype=torch.float32):
         
         
         self.x_vars = x_vars
@@ -84,35 +84,56 @@ class GroundstationDataset(Dataset):
         self.data = self.data.isel(y=slice(imiddle-phalf, imiddle+phalf +1),
                                 x=slice(imiddle-phalf, imiddle+phalf +1))
 
+        x_dict = {}
+        N =len(self.data.time)
+
+        self.lat_station = float(self.data.lat_station.values[0])
+        self.lon_station = float(self.data.lon_station.values[0])
+
         if 'dayofyear' in x_features:
             dayofyear = self.data.time.dt.dayofyear
+            x_dict['dayofyear'] = torch.tensor(dayofyear.values, dtype=dtype).view(-1, 1)
 
-        lat_station = self.data.lat.values
-        lon_station = self.data.lon.values
+        if 'lat' in x_features:
+            x_dict['lat'] = torch.tensor(self.lat_station, dtype=dtype).repeat(N, 1)
+            x_dict['lon'] = torch.tensor(self.lon_station, dtype=dtype).repeat(N, 1)
 
-        
-        if 'sat_azi' in x_features:
-            sat_azi = 
+        x_dict['SZA'] = torch.tensor(self.data.SZA.values, dtype=dtype).view(-1, 1) # sun zenith angle
+        x_dict['AZI'] = torch.tensor(self.data.AZI.values, dtype=dtype).view(-1, 1) # azimuth angle sun
 
+        if 'sat_AZI' in x_features:
+            sat_azi, sat_sza = get_satellite_look_angles(self.lat_station, self.lon_station, degree=True, dtype=dtype)
+            x_dict['sat_AZI'] = np.deg2rad(sat_azi).repeat(N,1)
+            x_dict['sat_SZA'] = np.deg2rad(sat_sza).repeat(N,1)
+
+        if 'coscatter_angle' in x_features:
+            x_dict['coscatter_angle'] = coscattering_angle(sat_azi, sat_sza, 
+                                                           x_dict['AZI'], x_dict['SZA'], dtype=dtype).view(-1,1)
+
+        self.x = torch.cat([x_dict[k] for k in x_features], dim=1)
 
         x_vars = [v for v in self.x_vars if v in self.data.channel.values]
-        self.X = torch.Tensor(self.data.channel_data.sel(channel=x_vars).values) # CxTxHxW
+        self.X = torch.tensor(self.data.channel_data.sel(channel=x_vars).values, dtype=torch.float16) # CxTxHxW
         self.X = self.X.permute(1,0, 2,3) # TxCxHxW
         if 'DEM' in self.x_vars:
-            X_DEM = torch.Tensor(self.dem['DEM'].values) # HxW
+            X_DEM = torch.tensor(self.dem['DEM'].values, dtype=torch.float16) # HxW
             X_DEM = X_DEM[None, None, :, :].repeat(self.X.shape[0], 1,1,1)
             self.X = torch.cat([self.X, X_DEM], dim=1)
 
-        self.y = torch.Tensor(self.data[self.y_vars].to_dataarray(dim="channels").values) # CxT
+        self.y = torch.tensor(self.data[self.y_vars].to_dataarray(dim="channels").values, dtype=dtype) # CxT
         self.y = self.y.permute(1,0) # TxC
-
-        self.x = torch.Tensor(self.data[self.x_features].to_dataarray(dim="channels").values) # CxT
-        self.x = self.x.permute(1,0) # TxC
 
         self.timeindices = self.data.time.values
 
         self.transform = transform
         self.target_transform = target_transform
+
+        if self.transform:
+            self.X = self.transform(self.X, self.x_vars)
+            self.x = self.transform(self.x, self.x_features)
+            
+        if self.target_transform:
+            self.y = self.target_transform(self.y, self.y_vars)
     
     def __len__(self):
         return self.X.shape[0]
@@ -122,13 +143,13 @@ class GroundstationDataset(Dataset):
         x = self.x[i]
         y = self.y[i]
 
-        if self.transform:
-            X = self.transform(X.unsqueeze(0), self.x_vars).squeeze()
-            x = self.transform(x.unsqueeze(0), self.x_features).squeeze()
+        # if self.transform:
+        #     X = self.transform(X.unsqueeze(0), self.x_vars).squeeze()
+        #     x = self.transform(x.unsqueeze(0), self.x_features).squeeze()
             
-        if self.target_transform:
-            y = self.target_transform(y.unsqueeze(0), self.y_vars).squeeze()
-        return X, x, y
+        # if self.target_transform:
+        #     y = self.target_transform(y.unsqueeze(0), self.y_vars).squeeze().view(1)
+        return X.float(), x.float(), y.float()
     
 
 
@@ -158,25 +179,4 @@ if __name__ == '__main__':
     transform = ZeroMinMax()
     target_transform = ZeroMinMax()
 
-    dataset = GroundstationDataset(
-        station_name=station_name,
-        y_vars=y_vars,
-        x_vars=x_vars,
-        x_features=x_features,
-        patch_size=patch_size,
-        time_window=time_window,
-        transform=transform,
-        target_transform=target_transform,
-    )
-    
-
-    X, x, y = dataset[0]
-    print(X)
-    print(x)
-    print(y)
-
-    dataloader = DataLoader(dataset, 10000, shuffle=True)
-
-    for X, x, y in tqdm(dataloader):
-        pass
 

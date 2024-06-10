@@ -50,7 +50,10 @@ MINMAX = {
     "lon": (-180, 180),
     "SZA": (0, np.pi/2),
     "AZI": (0, 2*np.pi),
-}
+    "sat_AZI": (0, 2*np.pi),
+    "sat_SZA": (0, np.pi/2),
+    "coscatter_angle": (0, np.pi),
+    }
 
 
 class MinMax:
@@ -180,7 +183,10 @@ class ZeroMinMax:
         MinMax normalization
         Assumes vars are on the second dimension (Channels) in order of the vars given.
         '''
-        
+        if isinstance(array, torch.Tensor):
+            dtype=array.dtype
+        else:
+            dtype=torch.float32
         
         shape = [1]*len(array.shape)
         
@@ -192,8 +198,8 @@ class ZeroMinMax:
             minvars = MINMAX[vars[0]][0]
             maxvars = MINMAX[vars[0]][1]
         else:
-            minvars = torch.tensor([MINMAX[x][0] for x in vars]).view(shape)
-            maxvars = torch.tensor([MINMAX[x][1] for x in vars]).view(shape)
+            minvars = torch.tensor([MINMAX[x][0] for x in vars], dtype=dtype).view(shape)
+            maxvars = torch.tensor([MINMAX[x][1] for x in vars], dtype=dtype).view(shape)
 
         return 2*(array - minvars)/(maxvars - minvars) - 1
 
@@ -203,6 +209,11 @@ class ZeroMinMax:
         Inverse MinMax normalization
         Assumes vars are on the second dimension (Channels) in order of the vars given.
         '''
+
+        if isinstance(array, torch.Tensor):
+            dtype=array.dtype
+        else:
+            dtype=torch.float32
         
         shape = [1]*len(array.shape)
         
@@ -212,10 +223,10 @@ class ZeroMinMax:
             shape[1] = array.shape[1] # (1, C, 1, ... 1)
         
         if len(vars) == 1:
-            minvars = MINMAX[vars[0]][0]
-            maxvars = MINMAX[vars[0]][1]
+            minvars = torch.tensor(MINMAX[vars[0]][0], dtype=dtype)
+            maxvars = torch.tensor(MINMAX[vars[0]][1], dtype=dtype)
         else:
-            minvars = torch.tensor([MINMAX[x][0] for x in vars]).view(shape)
-            maxvars = torch.tensor([MINMAX[x][1] for x in vars]).view(shape)
+            minvars = torch.tensor([MINMAX[x][0] for x in vars], dtype=dtype).view(shape)
+            maxvars = torch.tensor([MINMAX[x][1] for x in vars], dtype=dtype).view(shape)
                                                                         
         return (array + 1)/2 * (maxvars - minvars) + minvars
