@@ -2,6 +2,7 @@ from typing import Any
 from matplotlib import colors, pyplot as plt
 import matplotlib
 from models.ConvResNet_Jiang import ConvResNet_batchnormMLP
+from models.ConvResNet_short import ConvResNet_short
 from scipy.stats import binned_statistic_2d
 import numpy as np
 from torch.optim import Adam
@@ -26,7 +27,7 @@ class LitEstimatorPoint(L.LightningModule):
         super().__init__()
         self.lr = learning_rate
 
-        self.model = ConvResNet_batchnormMLP(
+        self.model = ConvResNet_short(
             num_attr=len(config.x_features),
             input_channels=len(config.x_vars),
             output_channels=len(config.y_vars),
@@ -236,7 +237,7 @@ class LitEstimatorPoint(L.LightningModule):
         self.x_attr = []    
 
     def forward(self, X, x_attrs):
-        return self.model(X,x_attrs)
+        return self.model(X.float(),x_attrs.float())
   
 
     def configure_optimizers(self):
@@ -251,7 +252,7 @@ class LitEstimatorPoint(L.LightningModule):
             "optimizer": optimizer,
             "lr_scheduler": {
                 "scheduler": reduce_lr,
-                "monitor": "val_loss/dataloader_idx_0",
+                "monitor": "val_loss",
                 "frequency": 1,
             },
         }

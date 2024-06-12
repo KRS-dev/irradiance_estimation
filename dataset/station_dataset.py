@@ -18,6 +18,7 @@ class GroundstationDataset(Dataset):
                  SZA_max=85, dtype=torch.float32):
         
         
+
         self.x_vars = x_vars
         self.x_features = x_features
         self.y_vars = y_vars

@@ -2,7 +2,6 @@ import os
 import traceback
 from dataset.station_dataset import GroundstationDataset
 import matplotlib.pyplot as plt
-from models.FCN import residual_FCN
 import numpy as np
 import pandas as pd
 import torch
@@ -42,7 +41,7 @@ def get_dataloaders(config):
         patch_size=config.patch_size,
         transform=config.transform,
         target_transform=config.target_transform,
-        patches_per_image=config.batch_size,
+        patches_per_image=2048,
         validation=True,
     )
 
@@ -70,7 +69,7 @@ def get_testdataloader(config):
 def main():
 
     config = {
-        "batch_size": 2048,
+        "batch_size": 128,
         "patch_size": {
             "x": 15,
             "y": 15,
@@ -95,7 +94,7 @@ def main():
         "x_features": ["dayofyear", "lat", "lon", 'SZA', "AZI",],
         "transform": ZeroMinMax(),
         "target_transform": ZeroMinMax(),
-        'max_epochs': 14,
+        'max_epochs': 5,
         # Compute related
         'num_workers': 24,
         'ACCELERATOR': "gpu",   
@@ -103,15 +102,15 @@ def main():
         'NUM_NODES': 16,
         'STRATEGY': "ddp",
         'PRECISION': "32",
-        'EarlyStopping': {'patience':4},
+        'EarlyStopping': {'patience':3},
         'ModelCheckpoint':{'every_n_epochs':1, 'save_top_k':3},
-        'ckpt_fn': '/scratch/snx3000/kschuurm/irradiance_estimation/train/SIS_point_estimation/m4ms61hn/checkpoints/last.ckpt',
+        # 'ckpt_fn': '/scratch/snx3000/kschuurm/irradiance_estimation/train/SIS_point_estimation/m4ms61hn/checkpoints/last.ckpt',
     }
     config = SimpleNamespace(**config)
 
 
     estimator = LitEstimatorPoint(
-        learning_rate=0.000001,
+        learning_rate=0.001,
         config=config,
         metric=MeanSquaredError(),
     )
@@ -119,7 +118,7 @@ def main():
     config.model = type(estimator.model).__name__
 
     # wandb_logger = WandbLogger(name='Emulator', project="SIS_point_estimation", log_model=True)
-    wandb_logger = WandbLogger(name='Emulator', project="SIS_point_estimation", id='m4ms61hn', resume='must')
+    wandb_logger = WandbLogger(name='Emulator 3', project="SIS_point_estimation",)# id='m4ms61hn', resume='must')
 
 
     # if rank_zero_only.rank == 0:  # only update the wandb.config on the rank 0 process
@@ -132,12 +131,12 @@ def main():
         filename='{epoch}-{val_loss:.5f}',
         save_last=True,
     ) 
-    early_stopping = EarlyStopping(monitor='val_loss', 
-                                   patience=config.EarlyStopping['patience'],
-                                   verbose=True,
-                                   min_delta=0,
-                                   log_rank_zero_only=True,
-                                   check_finite=True,)
+    # early_stopping = EarlyStopping(monitor='val_loss', 
+    #                                patience=config.EarlyStopping['patience'],
+    #                                verbose=True,
+    #                                min_delta=0,
+    #                                log_rank_zero_only=True,
+    #                                check_finite=True,)
 
     trainer =  Trainer(
         # fast_dev_run=True,
@@ -149,9 +148,8 @@ def main():
         log_every_n_steps=500,
         strategy=config.STRATEGY,
         num_nodes=config.NUM_NODES,
-        callbacks=[ mc_sarah, early_stopping],
+        callbacks=[ mc_sarah],
         max_time="00:02:00:00",
-        ckpt_path=config.ckpt_fn,
     )
 
 
@@ -159,11 +157,12 @@ def main():
 
     trainer.fit(
         estimator, train_dataloaders=train_dataloader, val_dataloaders=val_dataloader,
+        # ckpt_path=config.ckpt_fn,
     )
 
-    print('Best model:', mc_sarah.best_model_path)
 
     if rank_zero_only.rank == 0:
+        print('Best model:', mc_sarah.best_model_path)
         wandb_logger.experiment.finish()
     
 

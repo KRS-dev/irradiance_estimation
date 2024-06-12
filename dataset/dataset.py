@@ -314,8 +314,6 @@ class SeviriDataset(Dataset):
 
         self.timeindices = np.sort(np.array(list(set(self.timeindices).intersection(set(self.seviri.time.values)))))
         
-        if validation is False:
-            self.timeindices = self.timeindices[torch.randperm(len(self.timeindices), generator=self.rng)]
 
         if validation is True:
             if os.path.exists('/scratch/snx3000/kschuurm/ZARR/idx_x_sampler.pkl') and os.path.exists('/scratch/snx3000/kschuurm/ZARR/idx_y_sampler.pkl'):
@@ -371,10 +369,13 @@ class SeviriDataset(Dataset):
             notnulls = self.sarah_nulls.nulls.sel(time=timeidx).load()
             coords_notnull = np.argwhere(np.array(notnulls[self.pad:-self.pad, self.pad:-self.pad]))
 
-            samples = coords_notnull[torch.randint(0, len(coords_notnull), (self.patches_per_image,), generator=self.rng)]
+            samples = coords_notnull[torch.randint(0, len(coords_notnull), (self.patches_per_image,))]
 
             idx_x_samples = self.pad + samples[:,1]
             idx_y_samples = self.pad + samples[:,0]
+        
+        if i == 0:
+            print(idx_x_samples[:20], idx_y_samples[:20])
 
         idx_x_da = xarray.DataArray(idx_x_samples, dims=['z'])
         idx_y_da = xarray.DataArray(idx_y_samples, dims=['z'])
