@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.nn.parameter import Parameter
-from models.ResBlock import ResBlock
+from models.resblock import ResBlock
 
 class ConvResNet_short(nn.Module):
     def __init__(self, num_attr: int = 5, input_channels=1, output_channels=1):

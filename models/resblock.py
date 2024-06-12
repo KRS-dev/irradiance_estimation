@@ -1,7 +1,6 @@
 import torch.nn as nn
 
 
-
 class ResBlock(nn.Module):
     def __init__(self, in_channels, hidden_channels, kernel_size,  out_channels=None):
         super(ResBlock, self).__init__()

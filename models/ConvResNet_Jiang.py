@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.nn.parameter import Parameter
-from models.ResBlock import ResBlock
+from models.resblock import ResBlock
 
 
 
