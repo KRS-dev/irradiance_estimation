@@ -62,11 +62,17 @@ class LitEstimatorPoint(L.LightningModule):
             if self.reference_parameters is None:
                 raise ValueError("No reference state dict provided to create parameter loss")
             par_loss = 0
-            par1_flat = torch.cat([par.flatten() for par in self.model.parameters() if par.requires_grad])
-            par2_flat = torch.cat([par.flatten() for par in self.reference_parameters if par.requires_grad])
+
+            par1_ls, par2_ls = [], []
+            for par1, par2 in zip(self.model.parameters(), self.reference_parameters):
+                if par1.requires_grad:
+                    par1_ls.append(par1.flatten())
+                    par2_ls.append(par2.flatten())
+            par1_flat = torch.cat(par1_ls)
+            par2_flat = torch.cat(par2_ls)
             par_loss = self.alpha*self.parameter_metric(par1_flat.to(self.device), par2_flat.to(self.device))
             loss += par_loss
-            self.log('par_loss', self.parameter_metric, logger=True, on_epoch=True, on_step=True)
+            self.log('par_loss', self.parameter_metric, logger=True, on_epoch=True, prog_bar=True, on_step=True)
 
         if self.zero_loss is not None:
             zero_idx = y_hat == -1
@@ -78,7 +84,7 @@ class LitEstimatorPoint(L.LightningModule):
             self.log('zero_loss', self.zero_loss, logger=True, on_step=True)
             loss += zero_loss
 
-        self.log("loss", self.train_metric, logger=True, on_epoch=True, on_step=True)
+        self.log("loss", self.train_metric, logger=True, on_epoch=True, prog_bar=True, on_step=True)
         return loss
 
     def validation_step(self, batch, batch_idx, dataloader_idx=0):
@@ -244,15 +250,27 @@ class LitEstimatorPoint(L.LightningModule):
         optimizer = torch.optim.AdamW(self.parameters(), 
                                       lr=self.lr,
                                     #   betas=(0.5, 0.9), 
-                                      weight_decay=0.01)
+                                      weight_decay=0.1)
         reduce_lr = torch.optim.lr_scheduler.ReduceLROnPlateau(
             optimizer, patience=0, factor=0.1, verbose=True
         )
+        
         return {
             "optimizer": optimizer,
             "lr_scheduler": {
                 "scheduler": reduce_lr,
-                "monitor": "val_loss",
-                "frequency": 1,
+                "monitor": "val_loss/dataloader_idx_0",
+                "interval": "step",
+                "frequency": 0.051*2067,
             },
         }
+        
+        
+        # return {
+        #     "optimizer": optimizer,
+        #     "lr_scheduler": {
+        #         "scheduler": reduce_lr,
+        #         "monitor": "val_loss/dataloader_idx_0",
+        #         "frequency": 1,
+        #     },
+        # }

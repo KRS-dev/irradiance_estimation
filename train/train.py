@@ -69,7 +69,7 @@ def get_testdataloader(config):
 def main():
 
     config = {
-        "batch_size": 128,
+        "batch_size": 512,
         "patch_size": {
             "x": 15,
             "y": 15,
@@ -104,7 +104,8 @@ def main():
         'PRECISION': "32",
         'EarlyStopping': {'patience':3},
         'ModelCheckpoint':{'every_n_epochs':1, 'save_top_k':3},
-        # 'ckpt_fn': '/scratch/snx3000/kschuurm/irradiance_estimation/train/SIS_point_estimation/m4ms61hn/checkpoints/last.ckpt',
+        'val_check_interval': 0.1,
+        'ckpt_fn': '/scratch/snx3000/kschuurm/irradiance_estimation/train/SIS_point_estimation/jup3gn3n/checkpoints/last.ckpt',
     }
     config = SimpleNamespace(**config)
 
@@ -117,8 +118,8 @@ def main():
 
     config.model = type(estimator.model).__name__
 
-    # wandb_logger = WandbLogger(name='Emulator', project="SIS_point_estimation", log_model=True)
-    wandb_logger = WandbLogger(name='Emulator 3', project="SIS_point_estimation",)# id='m4ms61hn', resume='must')
+    # wandb_logger = WandbLogger(name='Emulator 4', project="SIS_point_estimation", log_model=True)
+    wandb_logger = WandbLogger(name='Emulator 4', project="SIS_point_estimation", id='jup3gn3n', resume='must')
 
 
     # if rank_zero_only.rank == 0:  # only update the wandb.config on the rank 0 process
@@ -130,13 +131,15 @@ def main():
         save_top_k = config.ModelCheckpoint['save_top_k'],
         filename='{epoch}-{val_loss:.5f}',
         save_last=True,
+        save_on_train_epoch_end=False,
     ) 
-    # early_stopping = EarlyStopping(monitor='val_loss', 
-    #                                patience=config.EarlyStopping['patience'],
-    #                                verbose=True,
-    #                                min_delta=0,
-    #                                log_rank_zero_only=True,
-    #                                check_finite=True,)
+    early_stopping = EarlyStopping(monitor='val_loss', 
+                                   patience=config.EarlyStopping['patience'],
+                                   verbose=True,
+                                   min_delta=0.01,
+                                   log_rank_zero_only=True,
+                                   check_finite=True,
+                                   )
 
     trainer =  Trainer(
         # fast_dev_run=True,
@@ -150,6 +153,7 @@ def main():
         num_nodes=config.NUM_NODES,
         callbacks=[ mc_sarah],
         max_time="00:02:00:00",
+        val_check_interval=config.val_check_interval,
     )
 
 
@@ -157,7 +161,7 @@ def main():
 
     trainer.fit(
         estimator, train_dataloaders=train_dataloader, val_dataloaders=val_dataloader,
-        # ckpt_path=config.ckpt_fn,
+        ckpt_path=config.ckpt_fn,
     )
 
 

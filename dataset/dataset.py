@@ -129,7 +129,7 @@ class ImageDataset(Dataset):
                     "x": "lon",
                     "y": "lat",
                 }
-            )
+            ).drop_vars(['spatial_ref'])
         )
         self.dem = xarray.open_zarr("/scratch/snx3000/kschuurm/ZARR/DEM.zarr").fillna(0)
 
@@ -140,14 +140,14 @@ class ImageDataset(Dataset):
         )  # throws an error if lat, lon not the same
 
         self.sarah_nulls = xarray.open_zarr('/scratch/snx3000/kschuurm/ZARR/SARAH3_nulls.zip')
-        timeindices_sarah = self.sarah_nulls.any.where(self.sarah_nulls.any == True, drop=True).time.values
+        timeindices_sarah = self.sarah_nulls['any'].where((self.sarah_nulls['any'] == True).compute(), drop=True).time.values
 
         if timeindices is not None:
             self.timeindices = timeindices
         else:
             self.timeindices = timeindices_sarah
 
-        self.timeindices = np.array(list(set(self.timeindices.values).intersection(set(self.seviri.time.values))))
+        self.timeindices = np.array(list(set(self.timeindices).intersection(set(self.seviri.time.values))))
 
         if shuffle is not None:
             self.timeindices_samples = np.random.choice(range(len(self.timeindices)), size=len(self.timeindices), replace=False)

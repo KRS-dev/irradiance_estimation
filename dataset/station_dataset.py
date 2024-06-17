@@ -11,10 +11,13 @@ from tqdm import tqdm
 from utils.etc import benchmark
 from utils.satellite_position import get_satellite_look_angles, coscattering_angle
 
+import dask
+dask.config.set(scheduler='synchronous')
+
 class GroundstationDataset(Dataset):
     def __init__(self, zarr_store, y_vars, x_vars, x_features, 
                  patch_size=15, transform=None, target_transform=None, 
-                 subset_year=None, binned=False, bin_size=50, sarah_idx_only=False,
+                 sarah_idx_only=False, subset_year=None, binned=False, bin_size=50, 
                  SZA_max=85, dtype=torch.float32):
         
         
@@ -28,33 +31,48 @@ class GroundstationDataset(Dataset):
         self.data = self.data.rename_vars({
                 'GHI':'SIS',
             })
+
+        if 'lat' in self.data.variables.keys():
+            self.data = self.data.rename_dims({
+                'lat':'y',
+                'lon':'x'
+            }).rename_vars({
+                'lat':'y',
+                'lon':'x'
+            })
+            
         
         if subset_year:
             self.data = self.data.sel(time=self.data.time.dt.year == subset_year)
-
+        
         if sarah_idx_only:
             sarah = xarray.open_zarr('/scratch/snx3000/kschuurm/ZARR/SARAH3.zarr')
             sarah_time = set(self.data.time.values).intersection(set(sarah.time.values))
             sarah_time = np.sort(np.array(list(sarah_time)))
             sarah.close()
             self.data = self.data.sel(time=sarah_time)
+        
+        
 
         if SZA_max:
-            self.data = self.data.where((self.data.SZA < SZA_max*np.pi/180).compute(), drop=True)
+            self.data = self.data.isel(time=(self.data.SZA < SZA_max*np.pi/180).compute())
+        
+        
         
         if binned:
-            with benchmark('binned'):
-                SIS_max = self.data.SIS.max().values
-                bins = np.arange(0, SIS_max + bin_size if SIS_max<1300 else 1300 + bin_size, bin_size)
-                digitized = np.digitize(self.data.SIS, bins)
-                size_bins = [np.sum(digitized == i) for i in range(1, len(bins))]
-                samples_per_bin = np.quantile(size_bins, .25)
-                idxs = []
-                for i in range(1, len(bins)):
-                    sample_size =np.min([int(samples_per_bin), size_bins[i-1]])
-                    idxs.append(np.random.choice(np.argwhere(digitized == i).squeeze(), sample_size, replace=False))
-                idxs = np.concatenate(idxs)
-                self.data = self.data.isel(time=np.sort(idxs))
+            SIS_max = self.data.SIS.max().values
+            bins = np.arange(0, SIS_max + bin_size if SIS_max<1300 else 1300 + bin_size, bin_size)
+            digitized = np.digitize(self.data.SIS, bins)
+            size_bins = [np.sum(digitized == i) for i in range(1, len(bins))]
+            samples_per_bin = np.quantile(size_bins, .25)
+            idxs = []
+            for i in range(1, len(bins)):
+                sample_size =np.min([int(samples_per_bin), size_bins[i-1]])
+                idxs.append(np.random.choice(np.argwhere(digitized == i).squeeze(), sample_size, replace=False))
+            idxs = np.concatenate(idxs)
+            self.data = self.data.isel(time=np.sort(idxs))
+        
+        
         
         seviri_trans = {
             "VIS006": "channel_1",
@@ -76,6 +94,7 @@ class GroundstationDataset(Dataset):
         self.dem = xarray.open_zarr('/scratch/snx3000/kschuurm/ZARR/DEM.zarr') \
                 .sel(lat=self.data.y, lon=self.data.x)
         
+        
         xlen = len(self.data.y)
         imiddle = int(np.floor(xlen/2))
         phalf = int(np.floor(patch_size/2))
@@ -88,8 +107,8 @@ class GroundstationDataset(Dataset):
         x_dict = {}
         N =len(self.data.time)
 
-        self.lat_station = float(self.data.lat_station.values[0])
-        self.lon_station = float(self.data.lon_station.values[0])
+        self.lat_station = float(self.data.lat_station.values)
+        self.lon_station = float(self.data.lon_station.values)
 
         if 'dayofyear' in x_features:
             dayofyear = self.data.time.dt.dayofyear
