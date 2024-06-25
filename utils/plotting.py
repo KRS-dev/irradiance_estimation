@@ -20,6 +20,11 @@ from sklearn.metrics import mean_absolute_percentage_error, r2_score, mean_absol
 VMIN = 0
 VMAX = 1360
 
+LABEL_SIZE = 15
+TITLE_SIZE = 20
+TICK_SIZE = 10
+LEGEND_SIZE = 15
+
 
 def plot_patches(y, y_hat, n_patches=4):
     shape = y.shape
@@ -100,8 +105,8 @@ def scatter_hist(x, y, ax, ax_histx, ax_histy, cax, output_var="SIS"):
     bins = np.arange(xymin, xymax, binwidth)
     ax_histx.hist(x, bins=bins, color=c_hist, density=True)
     ax_histy.hist(y, bins=bins, color=c_hist, orientation="horizontal", density=True)
-    ax_histx.set_title(f"{output_var}")
-    ax_histy.set_ylabel(f"{output_var} prediction", loc='center')
+    ax_histx.set_title(f"{output_var}", fontsize=LABEL_SIZE)
+    ax_histy.set_ylabel(f"{output_var} prediction", loc='center', fontsize=LABEL_SIZE)
     ax_histy.yaxis.set_label_position("right")
 
 
@@ -137,7 +142,7 @@ def prediction_error_plot(y, y_hat, output_var="SIS", title=None):
     ax_histx = fig.add_subplot(gs[0, 2], sharex=ax)
     ax_histy = fig.add_subplot(gs[1, 3], sharey=ax)
     cax = fig.add_subplot(gs[1, 0])
-    cax.set_title(title)
+    cax.set_title(title, fontsize=TITLE_SIZE)
     # Draw the scatter plot and marginals.
     scatter_hist(y, y_hat, ax, ax_histx, ax_histy, cax, output_var=output_var)
     ax.set_xlim(0, 1100)
