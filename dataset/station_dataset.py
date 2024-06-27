@@ -213,18 +213,10 @@ class GroundstationDataset2(Dataset):
             self.data['dayofyear'] = self.data.time.dt.dayofyear
 
         if 'lat' in x_features:
-            self.data = self.data.rename_dims({
-                'lat':'lat_',
-                'lon':'lon_'
-            }).rename_vars({
-                'lat':'lat_',
-                'lon':'lon_',
+            self.data = self.data.rename_vars({
                 'lat_station':'lat',
                 'lon_station':'lon',
             })
-            # self.data = self.data.assign({'lat':self.data.lat_station,
-            #                         'lon':self.data.lon_station,
-            #                         'DEM':self.data.altitude_station})
 
         x_vars = [v for v in self.x_vars if v in self.data.channel.values]
         self.X = torch.Tensor(self.data.channel_data.sel(channel=x_vars).values) # CxTxHxW
