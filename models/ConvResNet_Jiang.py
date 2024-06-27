@@ -2,37 +2,8 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.nn.parameter import Parameter
+from models.resblock import ResBlock
 
-
-class ResBlock(nn.Module):
-    def __init__(self, in_channels, hidden_channels, kernel_size,  out_channels=None):
-        super(ResBlock, self).__init__()
-        if out_channels is None:
-            out_channels = hidden_channels
-
-        self.conv1 = nn.Sequential(
-            nn.Conv2d(in_channels, hidden_channels, kernel_size, padding="same"),
-            nn.BatchNorm2d(hidden_channels),
-            nn.ReLU(),
-        )
-
-        self.conv2 = nn.Sequential(
-            nn.Conv2d(hidden_channels, out_channels, kernel_size, padding="same"),
-            nn.BatchNorm2d(hidden_channels),
-            nn.ReLU(),
-        )
-
-        # self.conv3 = nn.Sequential(
-        #     nn.Conv2d(hidden_channels, out_channels, kernel_size, padding="same"),
-        #     nn.BatchNorm2d(out_channels),
-        #     nn.ReLU(),
-        # )
-
-    def forward(self, x):
-        x1 = self.conv1(x)
-        x = self.conv2(x1) + x1
-        # x = self.conv3(x) + x1  # residual connection
-        return x
 
 
 class ConvResNet(nn.Module):
@@ -70,7 +41,7 @@ class ConvResNet(nn.Module):
             nn.Linear(64, output_channels),
         )
 
-        self.relu_rect = nn.ReLU()
+        # self.relu_rect = nn.ReLU()
 
 
     def forward(self, x, x_attrs):
@@ -88,7 +59,7 @@ class ConvResNet(nn.Module):
         )  # batch_size x 256+6, Stack along the Channel dim
         x = self.mlp(x)
         
-        x = self.relu_rect(x + 1) - 1
+        # x = self.relu_rect(x + 1) - 1
         return x
 
 class ConvResNet_dropout(ConvResNet):

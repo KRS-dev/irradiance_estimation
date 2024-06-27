@@ -20,6 +20,11 @@ from sklearn.metrics import mean_absolute_percentage_error, r2_score, mean_absol
 VMIN = 0
 VMAX = 1360
 
+LABEL_SIZE = 15
+TITLE_SIZE = 20
+TICK_SIZE = 10
+LEGEND_SIZE = 15
+
 
 def plot_patches(y, y_hat, n_patches=4):
     shape = y.shape
@@ -65,7 +70,7 @@ def scatter_hist(x, y, ax, ax_histx, ax_histy, cax, output_var="SIS"):
     ax.plot([VMIN, VMAX], intercept + slope*np.array([VMIN, VMAX]), 'b-.')
 
 
-    metrics = {'R2 [-]':r2_score, 'Bias [W/m2]': bias_metric, 'MAE [W/m2]': mean_absolute_error, 'RMSE [W/m2]' : root_mean_squared_error}
+    metrics = {'R2 [-]':r2_score, 'MDB [W/m2]': bias_metric, 'MAE [W/m2]': mean_absolute_error, 'RMSE [W/m2]' : root_mean_squared_error}
     metrics = {key:val(x, y) for key, val in metrics.items()}
     txt = [f'{key} = {np.round(float(val), 3)}' for key,val in metrics.items()]
     txt = '\n'.join(txt)
@@ -100,8 +105,8 @@ def scatter_hist(x, y, ax, ax_histx, ax_histy, cax, output_var="SIS"):
     bins = np.arange(xymin, xymax, binwidth)
     ax_histx.hist(x, bins=bins, color=c_hist, density=True)
     ax_histy.hist(y, bins=bins, color=c_hist, orientation="horizontal", density=True)
-    ax_histx.set_title(f"{output_var}")
-    ax_histy.set_ylabel(f"{output_var} prediction", loc='center')
+    ax_histx.set_title(f"{output_var}", fontsize=LABEL_SIZE)
+    ax_histy.set_ylabel(f"{output_var} prediction", loc='center', fontsize=LABEL_SIZE)
     ax_histy.yaxis.set_label_position("right")
 
 
@@ -137,7 +142,7 @@ def prediction_error_plot(y, y_hat, output_var="SIS", title=None):
     ax_histx = fig.add_subplot(gs[0, 2], sharex=ax)
     ax_histy = fig.add_subplot(gs[1, 3], sharey=ax)
     cax = fig.add_subplot(gs[1, 0])
-    cax.set_title(title)
+    cax.set_title(title, fontsize=TITLE_SIZE)
     # Draw the scatter plot and marginals.
     scatter_hist(y, y_hat, ax, ax_histx, ax_histy, cax, output_var=output_var)
     ax.set_xlim(0, 1100)
@@ -231,7 +236,7 @@ def SZA_error_plot(SZA, SIS_error):
     bins =  np.arange(0, 9/16*np.pi, np.pi/16)
     sza_bins_labels = np.rad2deg(bins)
     bin_indices = np.digitize(SZA.cpu(),bins)
-    SZAs_errors = [SIS_error[bin_indices == i] for i in range(len(bins))]
+    SZAs_errors = [SIS_error[bin_indices == i].squeeze() for i in range(len(bins))]
 
 
     fig, ax = plt.subplots(nrows=1, ncols=1, figsize=(7, 4))
@@ -281,22 +286,41 @@ def latlon_error_plot(lat, lon, SIS_error, latlon_step=0.5):
     lat_bins =  np.arange(np.floor(torch.min(lat)), torch.max(lat) + latlon_step, latlon_step)
     lon_bins = np.arange(np.floor(torch.min(lon)), torch.max(lon) + latlon_step, latlon_step)
     mean_error, y_edge, x_edge, _ = binned_statistic_2d(lat, lon, SIS_error, bins = [lat_bins, lon_bins])
+    std_error, y_edge, x_edge, _ = binned_statistic_2d(lat, lon, SIS_error, bins = [lat_bins, lon_bins], statistic='std')
+    def rmse(x):
+        if len(x) == 0:
+            return np.nan
+        else:
+            return np.sqrt(np.mean(x**2))
+    rmse_error, y_edge, x_edge, _ = binned_statistic_2d(lat, lon, SIS_error, bins = [lat_bins, lon_bins], statistic=rmse)
+    
 
     proj = ccrs.PlateCarree()
     cmap = cm.bwr
     divnorm=colors.TwoSlopeNorm(vcenter=0.)
-    fig, ax = plt.subplots(nrows=1, ncols=1, figsize=(8, 8), subplot_kw={'projection': proj})
-    pmesh = ax.pcolormesh(x_edge, y_edge, mean_error, shading='auto', transform=proj, cmap=cmap, norm=divnorm)
-    fig.colorbar(pmesh)
-    ax.set_title('Error distribution Location')
-    ax.set_ylabel('Longitude')
-    ax.set_xlabel('Latitude')
-    ax.xaxis.set_major_locator(LongitudeLocator())
-    ax.yaxis.set_major_locator(LatitudeLocator())
-    ax.xaxis.set_major_formatter(LongitudeFormatter())
-    ax.yaxis.set_major_formatter(LatitudeFormatter())
-    ax.add_feature(cf.COASTLINE, zorder=3)
-    ax.add_feature(cf.BORDERS, zorder=3)
+    fig, axes = plt.subplots(nrows=1, ncols=3, figsize=(24, 8), subplot_kw={'projection': proj})
+
+    pmesh = axes[0].pcolormesh(x_edge, y_edge, mean_error, shading='auto', transform=proj, cmap=cmap, norm=divnorm)
+    axes[0].set_title('MBE')
+    fig.colorbar(pmesh, ax=axes[0], orientation='vertical', label='[$w/m^2$]')
+
+    pmesh = axes[1].pcolormesh(x_edge, y_edge, rmse_error, shading='auto', transform=proj, cmap='plasma')
+    axes[1].set_title('RMSE')
+    fig.colorbar(pmesh, ax=axes[1], orientation='vertical', label='[$w/m^2$]')
+
+    pmesh = axes[2].pcolormesh(x_edge, y_edge, std_error, shading='auto', transform=proj, cmap='plasma')
+    axes[2].set_title('STD')
+    fig.colorbar(pmesh, ax=axes[2], orientation='vertical', label='[-]')
+
+    for ax in axes:
+        ax.set_ylabel('Longitude')
+        ax.set_xlabel('Latitude')
+        ax.xaxis.set_major_locator(LongitudeLocator())
+        ax.yaxis.set_major_locator(LatitudeLocator())
+        ax.xaxis.set_major_formatter(LongitudeFormatter())
+        ax.yaxis.set_major_formatter(LatitudeFormatter())
+        ax.add_feature(cf.COASTLINE, zorder=3)
+        ax.add_feature(cf.BORDERS, zorder=3)
 
     return fig, pmesh
 

@@ -9,140 +9,19 @@ import xarray
 import numpy as np
 from tqdm import tqdm
 from utils.etc import benchmark
+from utils.satellite_position import get_satellite_look_angles, coscattering_angle
+
+import dask
+dask.config.set(scheduler='synchronous')
 
 class GroundstationDataset(Dataset):
-    def __init__(self, station_name, y_vars, x_vars, x_features, 
-                 patch_size=15, time_window=12, transform=None, target_transform=None,
-                 sarah_idx_only=False, SZA_max=85):
-        
-        self.x_vars = x_vars
-        self.x_features = x_features
-        self.y_vars = y_vars
-        self.station_seviri = xarray.open_zarr(f'/scratch/snx3000/kschuurm/ZARR/{station_name}/SEVIRI_{station_name}.zarr') \
-                                    .drop_duplicates('time')
-        self.station_seviri = self.station_seviri.rename(
-            {'y':'lat','x':'lon'}
-            ).rename_vars({
-            'VIS006':'channel_1',
-            'VIS008':'channel_2',
-            'IR_016':'channel_3',
-            'IR_039':'channel_4',
-            'WV_062':'channel_5',
-            'WV_073':'channel_6',
-            'IR_087':'channel_7',   
-            'IR_097':'channel_8',
-            'IR_108':'channel_9',
-            'IR_120':'channel_10',
-            'IR_134':'channel_11',
-        })
-
-        self.dem = xarray.open_zarr('/scratch/snx3000/kschuurm/ZARR/DEM.zarr').sel(lat=self.station_seviri.lat, lon=self.station_seviri.lon)
-        # self.station_seviri = xarray.merge([self.station_seviri, self.DEM], join='exact')
-
-        xlen = len(self.station_seviri.lon)
-        imiddle = int(np.floor(xlen/2))
-        phalf = int(np.floor(patch_size/2))
-
-        self.station_seviri = self.station_seviri.isel(lat=slice(imiddle-phalf, imiddle+phalf +1),
-                                                        lon=slice(imiddle-phalf, imiddle+phalf +1))
-        self.dem = self.dem.isel(lat=slice(imiddle-phalf, imiddle+phalf +1),
-                                lon=slice(imiddle-phalf, imiddle+phalf +1))
-
-        self.station = xarray.open_zarr('/scratch/snx3000/kschuurm/ZARR/IEA_PVPS_europe.zarr')  \
-                    .sel(station_name=station_name) \
-                    .rename_vars({
-                        'GHI':'SIS',
-                        'DNI':'DNI',
-                        # 'DIF':'SID',
-                        'Kc':'KI',
-                        'latitude':'lat',
-                        'longitude':'lon',
-                        'Azim': 'AZI',
-                    }).load()
-
-        self.station['SZA'] = (90 - self.station['Elev'] )/180*np.pi # SZA = 90 - Elev, [0, 90*] or [0, 1/2pi]
-        self.station['AZI'] = self.station['AZI']/180*np.pi # AZI [0, 360*] or [0, 2pi]
-
-        if 'dayofyear' in x_features:
-            self.station['dayofyear'] = self.station.time.dt.dayofyear
-
-        if 'lat' in x_features:
-            self.station = self.station.rename_vars({
-                'lat':'lat_',
-                'lon':'lon_'
-            })
-            self.station = self.station.assign({'lat':self.station.lat_,
-                                    'lon':self.station.lon_,
-                                    'DEM':self.station.elevation})
-
-        self.rolling_station = self.station.rolling(time=time_window,center=False) \
-                                    .mean(skipna=True) # center=False puts the time index for the mean at the right most corner, we want the left most corner
-        self.rolling_station['time'] = self.rolling_station['time'] - np.timedelta64(time_window, 'm')
-
-        # select available time slices
-        self.timeidxnotnan = np.load(f'/scratch/snx3000/kschuurm/ZARR/{station_name}/timeidxnotnan.npy')
-
-        if sarah_idx_only:
-            sarah = xarray.open_zarr('/scratch/snx3000/kschuurm/ZARR/SARAH3_new.zarr')
-            sarah_time = set(self.timeidxnotnan).intersection(set(sarah.time.values))
-            sarah_time = np.sort(np.array(list(sarah_time)))
-            sarah.close()
-            self.timeidxnotnan = sarah_time
-        
-        if SZA_max:
-            self.station = self.station.where(self.station.SZA < SZA_max*np.pi/180, drop=True)
-
-        self.rolling_station = self.rolling_station.sel(time=self.timeidxnotnan)
-        self.station_seviri = self.station_seviri.sel(time=self.timeidxnotnan)
-
-        x_vars = [v for v in self.x_vars if v in self.station_seviri.keys()]
-        self.X = torch.Tensor(self.station_seviri[x_vars].to_dataarray(dim="channels").values) # CxTxHxW
-        self.X = self.X.permute(1,0, 2,3) # TxCxHxW
-        if 'DEM' in self.x_vars:
-            X_DEM = torch.Tensor(self.dem['DEM'].values) # HxW
-            X_DEM = X_DEM[None, None, :, :].repeat(self.X.shape[0], 1,1,1)
-            self.X = torch.cat([self.X, X_DEM], dim=1)
-
-        self.y = torch.Tensor(self.rolling_station[self.y_vars].to_dataarray(dim="channels").values) # CxT
-        self.y = self.y.permute(1,0) # TxC
-
-        self.x = torch.Tensor(self.rolling_station[self.x_features].to_dataarray(dim="channels").values) # CxT
-        self.x = self.x.permute(1,0) # TxC
-
-        self.transform = transform
-        self.target_transform = target_transform
-
-        if self.transform:
-            self.X = self.transform(self.X, self.x_vars)
-            self.x = self.transform(self.x, self.x_features)
-            
-        if self.target_transform:
-            self.y = self.target_transform(self.y, self.y_vars)
-    
-    def __len__(self):
-        return len(self.timeidxnotnan)
-
-    def __getitem__(self, i):
-        X = self.X[i]
-        x = self.x[i]
-        y = self.y[i]
-        return X, x, y
-
-    def get_xarray(self, i):
-        timeidx = self.timeidxnotnan[i]
-        X_xr = self.station_seviri.sel(time=timeidx)[self.x_vars].to_dataarray(dim="channels")
-        x_xr = self.station.sel(time=timeidx)[self.x_features].to_dataarray(dim='channels')
-        y_xr = self.station.sel(time=timeidx)[self.y_vars].to_dataarray(dim='channels')
-        return X_xr, x_xr, y_xr
-
-
-class GroundstationDataset2(Dataset):
     def __init__(self, zarr_store, y_vars, x_vars, x_features, 
                  patch_size=15, transform=None, target_transform=None, 
-                 subset_year=None, binned=False, bin_size=50, sarah_idx_only=False,
-                 SZA_max=85):
+                 sarah_idx_only=False, subset_year=None, binned=False, bin_size=50, 
+                 SZA_max=85, dtype=torch.float32):
         
         
+
         self.x_vars = x_vars
         self.x_features = x_features
         self.y_vars = y_vars
@@ -152,33 +31,48 @@ class GroundstationDataset2(Dataset):
         self.data = self.data.rename_vars({
                 'GHI':'SIS',
             })
+
+        if 'lat' in self.data.variables.keys():
+            self.data = self.data.rename_dims({
+                'lat':'y',
+                'lon':'x'
+            }).rename_vars({
+                'lat':'y',
+                'lon':'x'
+            })
+            
         
         if subset_year:
             self.data = self.data.sel(time=self.data.time.dt.year == subset_year)
-
+        
         if sarah_idx_only:
             sarah = xarray.open_zarr('/scratch/snx3000/kschuurm/ZARR/SARAH3.zarr')
             sarah_time = set(self.data.time.values).intersection(set(sarah.time.values))
             sarah_time = np.sort(np.array(list(sarah_time)))
             sarah.close()
             self.data = self.data.sel(time=sarah_time)
+        
+        
 
         if SZA_max:
-            self.data = self.data.where((self.data.SZA < SZA_max*np.pi/180).compute(), drop=True)
+            self.data = self.data.isel(time=(self.data.SZA < SZA_max*np.pi/180).compute())
+        
+        
         
         if binned:
-            with benchmark('binned'):
-                SIS_max = self.data.SIS.max().values
-                bins = np.arange(0, SIS_max + bin_size if SIS_max<1300 else 1300 + bin_size, bin_size)
-                digitized = np.digitize(self.data.SIS, bins)
-                size_bins = [np.sum(digitized == i) for i in range(1, len(bins))]
-                samples_per_bin = np.quantile(size_bins, .25)
-                idxs = []
-                for i in range(1, len(bins)):
-                    sample_size =np.min([int(samples_per_bin), size_bins[i-1]])
-                    idxs.append(np.random.choice(np.argwhere(digitized == i).squeeze(), sample_size, replace=False))
-                idxs = np.concatenate(idxs)
-                self.data = self.data.isel(time=np.sort(idxs))
+            SIS_max = self.data.SIS.max().values
+            bins = np.arange(0, SIS_max + bin_size if SIS_max<1300 else 1300 + bin_size, bin_size)
+            digitized = np.digitize(self.data.SIS, bins)
+            size_bins = [np.sum(digitized == i) for i in range(1, len(bins))]
+            samples_per_bin = np.quantile(size_bins, .25)
+            idxs = []
+            for i in range(1, len(bins)):
+                sample_size =np.min([int(samples_per_bin), size_bins[i-1]])
+                idxs.append(np.random.choice(np.argwhere(digitized == i).squeeze(), sample_size, replace=False))
+            idxs = np.concatenate(idxs)
+            self.data = self.data.isel(time=np.sort(idxs))
+        
+        
         
         seviri_trans = {
             "VIS006": "channel_1",
@@ -198,39 +92,56 @@ class GroundstationDataset2(Dataset):
         self.data['channel'] = nms_trans
 
         self.dem = xarray.open_zarr('/scratch/snx3000/kschuurm/ZARR/DEM.zarr') \
-                .sel(lat=self.data.lat, lon=self.data.lon)
-
-        xlen = len(self.data.lat)
+                .sel(lat=self.data.y, lon=self.data.x)
+        
+        
+        xlen = len(self.data.y)
         imiddle = int(np.floor(xlen/2))
         phalf = int(np.floor(patch_size/2))
 
-        self.dem = self.dem.isel(lat=slice(imiddle-phalf, imiddle+phalf +1),
-                                lon=slice(imiddle-phalf, imiddle+phalf +1))
-        self.data = self.data.isel(lat=slice(imiddle-phalf, imiddle+phalf +1),
-                                lon=slice(imiddle-phalf, imiddle+phalf +1))
+        self.dem = self.dem.isel(y=slice(imiddle-phalf, imiddle+phalf +1),
+                                x=slice(imiddle-phalf, imiddle+phalf +1))
+        self.data = self.data.isel(y=slice(imiddle-phalf, imiddle+phalf +1),
+                                x=slice(imiddle-phalf, imiddle+phalf +1))
+
+        x_dict = {}
+        N =len(self.data.time)
+
+        self.lat_station = float(self.data.lat_station.values)
+        self.lon_station = float(self.data.lon_station.values)
 
         if 'dayofyear' in x_features:
-            self.data['dayofyear'] = self.data.time.dt.dayofyear
+            dayofyear = self.data.time.dt.dayofyear
+            x_dict['dayofyear'] = torch.tensor(dayofyear.values, dtype=dtype).view(-1, 1)
 
         if 'lat' in x_features:
-            self.data = self.data.rename_vars({
-                'lat_station':'lat',
-                'lon_station':'lon',
-            })
+            x_dict['lat'] = torch.tensor(self.lat_station, dtype=dtype).repeat(N, 1)
+            x_dict['lon'] = torch.tensor(self.lon_station, dtype=dtype).repeat(N, 1)
+
+        x_dict['SZA'] = torch.tensor(self.data.SZA.values, dtype=dtype).view(-1, 1) # sun zenith angle
+        x_dict['AZI'] = torch.tensor(self.data.AZI.values, dtype=dtype).view(-1, 1) # azimuth angle sun
+
+        if 'sat_AZI' in x_features:
+            sat_azi, sat_sza = get_satellite_look_angles(self.lat_station, self.lon_station, degree=True, dtype=dtype)
+            x_dict['sat_AZI'] = np.deg2rad(sat_azi).repeat(N,1)
+            x_dict['sat_SZA'] = np.deg2rad(sat_sza).repeat(N,1)
+
+        if 'coscatter_angle' in x_features:
+            x_dict['coscatter_angle'] = coscattering_angle(sat_azi, sat_sza, 
+                                                           x_dict['AZI'], x_dict['SZA'], dtype=dtype).view(-1,1)
+
+        self.x = torch.cat([x_dict[k] for k in x_features], dim=1)
 
         x_vars = [v for v in self.x_vars if v in self.data.channel.values]
-        self.X = torch.Tensor(self.data.channel_data.sel(channel=x_vars).values) # CxTxHxW
+        self.X = torch.tensor(self.data.channel_data.sel(channel=x_vars).values, dtype=torch.float16) # CxTxHxW
         self.X = self.X.permute(1,0, 2,3) # TxCxHxW
         if 'DEM' in self.x_vars:
-            X_DEM = torch.Tensor(self.dem['DEM'].values) # HxW
+            X_DEM = torch.tensor(self.dem['DEM'].values, dtype=torch.float16) # HxW
             X_DEM = X_DEM[None, None, :, :].repeat(self.X.shape[0], 1,1,1)
             self.X = torch.cat([self.X, X_DEM], dim=1)
 
-        self.y = torch.Tensor(self.data[self.y_vars].to_dataarray(dim="channels").values) # CxT
+        self.y = torch.tensor(self.data[self.y_vars].to_dataarray(dim="channels").values, dtype=dtype) # CxT
         self.y = self.y.permute(1,0) # TxC
-
-        self.x = torch.Tensor(self.data[self.x_features].to_dataarray(dim="channels").values) # CxT
-        self.x = self.x.permute(1,0) # TxC
 
         self.timeindices = self.data.time.values
 
@@ -252,7 +163,13 @@ class GroundstationDataset2(Dataset):
         x = self.x[i]
         y = self.y[i]
 
-        return X, x, y
+        # if self.transform:
+        #     X = self.transform(X.unsqueeze(0), self.x_vars).squeeze()
+        #     x = self.transform(x.unsqueeze(0), self.x_features).squeeze()
+            
+        # if self.target_transform:
+        #     y = self.target_transform(y.unsqueeze(0), self.y_vars).squeeze().view(1)
+        return X.float(), x.float(), y.float()
     
 
 
@@ -282,25 +199,4 @@ if __name__ == '__main__':
     transform = ZeroMinMax()
     target_transform = ZeroMinMax()
 
-    dataset = GroundstationDataset(
-        station_name=station_name,
-        y_vars=y_vars,
-        x_vars=x_vars,
-        x_features=x_features,
-        patch_size=patch_size,
-        time_window=time_window,
-        transform=transform,
-        target_transform=target_transform,
-    )
-    
-
-    X, x, y = dataset[0]
-    print(X)
-    print(x)
-    print(y)
-
-    dataloader = DataLoader(dataset, 10000, shuffle=True)
-
-    for X, x, y in tqdm(dataloader):
-        pass
 

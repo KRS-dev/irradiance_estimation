@@ -34,23 +34,85 @@ MINMAX = {
     "KI": (0.0, 1.0),
     "DNI": (0.0, 1100.0),
     "DEM": (-7.6700854700854695, 3746.053675213676),
-    "channel_1": (0, 1),
-    "channel_10": (0, 1),
-    "channel_11": (0, 1),
-    "channel_2": (0, 1),
-    "channel_3": (0, 1),
-    "channel_4": (0, 1),
-    "channel_5": (0, 1),
-    "channel_6": (0, 1),
-    "channel_7": (0, 1),
-    "channel_8": (0, 1),
-    "channel_9": (0, 1),
+    "channel_1": (0, 101.6), 
+    "channel_2": (0, 110.6),
+    "channel_3": (0, 99.56),
+    "channel_4": (204.6, 336.2),
+    "channel_5": (171.6, 263.0),
+    "channel_6": (194.1, 284.5),
+    "channel_7": (194.2, 327.0),
+    "channel_8": (201.6, 293.5),
+    "channel_9": (124.06, 343.8),
+    "channel_10": (191.9, 333.2),
+    "channel_11": (192.9, 290.2),
     "dayofyear": (1, 365),
     "lat": (-90, 90),
     "lon": (-180, 180),
     "SZA": (0, np.pi/2),
     "AZI": (0, 2*np.pi),
-}
+    "sat_AZI": (0, 2*np.pi),
+    "sat_SZA": (0, np.pi/2),
+    "coscatter_angle": (0, np.pi),
+    }
+
+
+# SCALER_MINS = np.array([
+#     -2.5118103,
+#     -64.83977,
+#     63.404694,
+#     2.844452,
+#     199.10002,
+#     -17.254883,
+#     -26.29155,
+#     -1.1009827,
+#     -2.4184198,
+#     199.57048,
+#     198.95093,
+# ])
+ 
+# SCALER_MAXS = np.array([
+#     69.60857,
+#     339.15588,
+#     340.26526,
+#     317.86752,
+#     313.2767,
+#     315.99194,
+#     274.82297,
+#     93.786545,
+#     101.34922,
+#     249.91806,
+#     286.96323,
+# ])
+
+# MINMAX = {
+#     "SIS": (0.0, 1159.0),
+#     "CAL": (0.0, 1.0),
+#     "SID": (0.0, 1071),
+#     "KI": (0.0, 1.0),
+#     "DNI": (0.0, 1100.0),
+#     "DEM": (-7.6700854700854695, 3746.053675213676),
+#     "channel_1": (0, 101.6), 
+#     "channel_2": (0, 110.6),
+#     "channel_3": (-2.5118103, 69.60857),
+#     "channel_4": (-64.83977, 339.15588),
+#     "channel_5": (171.6, 263.0),
+#     "channel_6": (194.1, 284.5),
+#     "channel_7": (194.2, 327.0),
+#     "channel_8": (201.6, 293.5),
+#     "channel_9": (124.06, 343.8),
+#     "channel_10": (191.9, 333.2),
+#     "channel_11": (192.9, 290.2),
+#     "dayofyear": (1, 365),
+#     "lat": (-90, 90),
+#     "lon": (-180, 180),
+#     "SZA": (0, np.pi/2),
+#     "AZI": (0, 2*np.pi),
+#     "sat_AZI": (0, 2*np.pi),
+#     "sat_SZA": (0, np.pi/2),
+#     "coscatter_angle": (0, np.pi),
+#     }
+
+
 
 class MinMax:
     def __init__(self):
@@ -179,7 +241,10 @@ class ZeroMinMax:
         MinMax normalization
         Assumes vars are on the second dimension (Channels) in order of the vars given.
         '''
-        
+        if isinstance(array, torch.Tensor):
+            dtype=array.dtype
+        else:
+            dtype=torch.float32
         
         shape = [1]*len(array.shape)
         
@@ -191,8 +256,8 @@ class ZeroMinMax:
             minvars = MINMAX[vars[0]][0]
             maxvars = MINMAX[vars[0]][1]
         else:
-            minvars = torch.tensor([MINMAX[x][0] for x in vars]).view(shape)
-            maxvars = torch.tensor([MINMAX[x][1] for x in vars]).view(shape)
+            minvars = torch.tensor([MINMAX[x][0] for x in vars], dtype=dtype).view(shape)
+            maxvars = torch.tensor([MINMAX[x][1] for x in vars], dtype=dtype).view(shape)
 
         return 2*(array - minvars)/(maxvars - minvars) - 1
 
@@ -202,6 +267,11 @@ class ZeroMinMax:
         Inverse MinMax normalization
         Assumes vars are on the second dimension (Channels) in order of the vars given.
         '''
+
+        if isinstance(array, torch.Tensor):
+            dtype=array.dtype
+        else:
+            dtype=torch.float32
         
         shape = [1]*len(array.shape)
         
@@ -211,10 +281,10 @@ class ZeroMinMax:
             shape[1] = array.shape[1] # (1, C, 1, ... 1)
         
         if len(vars) == 1:
-            minvars = MINMAX[vars[0]][0]
-            maxvars = MINMAX[vars[0]][1]
+            minvars = torch.tensor(MINMAX[vars[0]][0], dtype=dtype)
+            maxvars = torch.tensor(MINMAX[vars[0]][1], dtype=dtype)
         else:
-            minvars = torch.tensor([MINMAX[x][0] for x in vars]).view(shape)
-            maxvars = torch.tensor([MINMAX[x][1] for x in vars]).view(shape)
+            minvars = torch.tensor([MINMAX[x][0] for x in vars], dtype=dtype).view(shape)
+            maxvars = torch.tensor([MINMAX[x][1] for x in vars], dtype=dtype).view(shape)
                                                                         
         return (array + 1)/2 * (maxvars - minvars) + minvars

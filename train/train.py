@@ -2,7 +2,6 @@ import os
 import traceback
 from dataset.station_dataset import GroundstationDataset
 import matplotlib.pyplot as plt
-from models.FCN import residual_FCN
 import numpy as np
 import pandas as pd
 import torch
@@ -11,27 +10,21 @@ from torchmetrics import MeanAbsoluteError, MeanSquaredError
 import wandb
 import xarray
 from dataset.dataset import ImageDataset, SeviriDataset, valid_test_split, pickle_read
-from dataset.normalization import MinMax, ZeroMinMax
+from dataset.normalization import ZeroMinMax
 from lightning.pytorch import Trainer
 from lightning.pytorch.loggers import WandbLogger
 from lightning.pytorch.utilities import rank_zero_only
 from lightning.pytorch.callbacks import EarlyStopping, ModelCheckpoint
-from models.ConvResNet_Jiang import ConvResNet, ConvResNet_batchnormMLP, ConvResNet_dropout, ConvResNet_inputCdropout, ConvResNet_BNdropout
-from models.LightningModule import LitEstimator, LitEstimatorPoint
+from models.LightningModule import LitEstimatorPoint
 from tqdm import tqdm
 
-# from pytorch_lightning.pytorch.callbacks import DeviceStatsMonitor
 from types import SimpleNamespace
+
+os.environ["WANDB__SERVICE_WAIT"] = "30"
 
 def get_dataloaders(config):
     
-    timeindex = pd.DatetimeIndex(pickle_read('/scratch/snx3000/kschuurm/ZARR/timeindices.pkl'))
-    # timeindex = timeindex[(timeindex.hour >10) & (timeindex.hour <17)]
-    traintimeindex = timeindex[(timeindex.year <= 2021)]
-    # _, validtimeindex = valid_test_split(timeindex[(timeindex.year == 2017)])
-    validtimeindex= timeindex[(timeindex.year==2022)]
 
-    
     train_dataset = SeviriDataset(
         x_vars=config.x_vars,
         y_vars=config.y_vars,
@@ -40,7 +33,6 @@ def get_dataloaders(config):
         transform=config.transform,
         target_transform=config.target_transform,
         patches_per_image=config.batch_size,
-        timeindices=traintimeindex,
     )
     valid_dataset = SeviriDataset(
         x_vars=config.x_vars,
@@ -49,9 +41,8 @@ def get_dataloaders(config):
         patch_size=config.patch_size,
         transform=config.transform,
         target_transform=config.target_transform,
-        patches_per_image=config.batch_size,
-        timeindices=validtimeindex,
-        seed=0,
+        patches_per_image=2048,
+        validation=True,
     )
 
     train_dataloader = DataLoader(train_dataset, shuffle=True, batch_size=None, num_workers=config.num_workers)
@@ -78,7 +69,7 @@ def get_testdataloader(config):
 def main():
 
     config = {
-        "batch_size": 2048,
+        "batch_size": 512,
         "patch_size": {
             "x": 15,
             "y": 15,
@@ -103,34 +94,36 @@ def main():
         "x_features": ["dayofyear", "lat", "lon", 'SZA', "AZI",],
         "transform": ZeroMinMax(),
         "target_transform": ZeroMinMax(),
-        'max_epochs': 10,
+        'max_epochs': 5,
         # Compute related
         'num_workers': 24,
-        'ACCELERATOR': "gpu",
+        'ACCELERATOR': "gpu",   
         'DEVICES': -1,
-        'NUM_NODES': 32,
+        'NUM_NODES': 16,
         'STRATEGY': "ddp",
         'PRECISION': "32",
-        'EarlyStopping': {'patience':2},
-        'ModelCheckpoint':{'every_n_epochs':1, 'save_top_k':1},
-        'ckpt_fn': None, #'/scratch/snx3000/kschuurm/irradiance_estimation/train/SIS_point_estimation_groundstation/pl86of1b/checkpoints/epoch=4-val_loss=0.01630.ckpt',
+        'EarlyStopping': {'patience':3},
+        'ModelCheckpoint':{'every_n_epochs':1, 'save_top_k':3},
+        'val_check_interval': 0.1,
+        'ckpt_fn': '/scratch/snx3000/kschuurm/irradiance_estimation/train/SIS_point_estimation/jup3gn3n/checkpoints/last.ckpt',
     }
     config = SimpleNamespace(**config)
 
 
     estimator = LitEstimatorPoint(
-        learning_rate=0.0001,
+        learning_rate=0.001,
         config=config,
         metric=MeanSquaredError(),
-        zero_loss=MeanAbsoluteError(),
     )
 
     config.model = type(estimator.model).__name__
 
-    wandb_logger = WandbLogger(name='zero_loss_MAE', project="SIS_point_estimation", log_model=True)
+    # wandb_logger = WandbLogger(name='Emulator 4', project="SIS_point_estimation", log_model=True)
+    wandb_logger = WandbLogger(name='Emulator 4', project="SIS_point_estimation", id='jup3gn3n', resume='must')
 
-    if rank_zero_only.rank == 0:  # only update the wandb.config on the rank 0 process
-        wandb_logger.experiment.config.update(vars(config))
+
+    # if rank_zero_only.rank == 0:  # only update the wandb.config on the rank 0 process
+    #     wandb_logger.experiment.config.update(vars(config))
 
     mc_sarah = ModelCheckpoint(
         monitor='val_loss', 
@@ -138,42 +131,43 @@ def main():
         save_top_k = config.ModelCheckpoint['save_top_k'],
         filename='{epoch}-{val_loss:.5f}',
         save_last=True,
+        save_on_train_epoch_end=False,
     ) 
     early_stopping = EarlyStopping(monitor='val_loss', 
                                    patience=config.EarlyStopping['patience'],
                                    verbose=True,
-                                   min_delta=0,
-                                   check_on_train_epoch_end=False,
-                                   log_rank_zero_only=True,)
+                                   min_delta=0.01,
+                                   log_rank_zero_only=True,
+                                   check_finite=True,
+                                   )
 
     trainer =  Trainer(
+        # fast_dev_run=True,
         logger=wandb_logger,
         accelerator=config.ACCELERATOR,
         devices=config.DEVICES,
-        min_epochs=1,
         max_epochs=config.max_epochs,
         precision=config.PRECISION,
         log_every_n_steps=500,
         strategy=config.STRATEGY,
         num_nodes=config.NUM_NODES,
-        callbacks=[ mc_sarah, early_stopping],
-        max_time="00:02:00:00"
+        callbacks=[ mc_sarah],
+        max_time="00:02:00:00",
+        val_check_interval=config.val_check_interval,
     )
 
-
-    if config.ckpt_fn is not None:
-        ch = torch.load(config.ckpt_fn, map_location=torch.device('cuda'))
-        estimator.load_state_dict(ch['state_dict'])
 
     train_dataloader, val_dataloader = get_dataloaders(config)
 
     trainer.fit(
         estimator, train_dataloaders=train_dataloader, val_dataloaders=val_dataloader,
+        ckpt_path=config.ckpt_fn,
     )
 
-    print('Best model:', mc_sarah.best_model_path)
 
-    wandb_logger.experiment.finish()
+    if rank_zero_only.rank == 0:
+        print('Best model:', mc_sarah.best_model_path)
+        wandb_logger.experiment.finish()
     
 
 if __name__ == "__main__":
