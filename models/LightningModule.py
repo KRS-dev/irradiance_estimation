@@ -177,7 +177,7 @@ class LitEstimatorPoint(L.LightningModule):
                 self.logger.log_image(key="Prediction error groundstations", images=figs)
             plt.close()
     
-    def predict_step(self, batch, batch_idx):
+    def predict_step(self, batch, batch_idx=0):
         X, x, y = batch
         y_hat = self.forward(X, x)
         y_hat[y_hat < -1] = -1
