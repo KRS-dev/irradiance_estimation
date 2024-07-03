@@ -122,8 +122,8 @@ def main():
     wandb_logger = WandbLogger(name='Emulator 4', project="SIS_point_estimation", id='jup3gn3n', resume='must')
 
 
-    # if rank_zero_only.rank == 0:  # only update the wandb.config on the rank 0 process
-    #     wandb_logger.experiment.config.update(vars(config))
+    if rank_zero_only.rank == 0:  # only update the wandb.config on the rank 0 process
+        wandb_logger.experiment.config.update(vars(config))
 
     mc_sarah = ModelCheckpoint(
         monitor='val_loss', 
