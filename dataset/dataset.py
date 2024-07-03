@@ -1,13 +1,13 @@
+from glob import glob
 import os
 import pickle
-import random
+from dataset.normalization import ZeroMinMax
 import torch
 from concurrent.futures import ThreadPoolExecutor
 import pandas as pd
 from torch.utils.data import DataLoader, Dataset
 import xarray
 from datetime import timedelta
-import lightning.pytorch as L
 import numpy as np
 import pandas as pd
 import ephem
@@ -17,7 +17,7 @@ import matplotlib.pyplot as plt
 
 from utils.etc import benchmark
 
-import dask
+import dask, gc
 dask.config.set(scheduler='synchronous')
 
 def create_singleImageDataset(**kwargs):
@@ -229,8 +229,6 @@ class ImageDataset(Dataset):
 
         return self.current_singleImageDataset[idx_patch]
 
-
-
 class SeviriDataset(Dataset):
     def __init__(
         self,
@@ -374,8 +372,6 @@ class SeviriDataset(Dataset):
             idx_x_samples = self.pad + samples[:,1]
             idx_y_samples = self.pad + samples[:,0]
         
-        if i == 0:
-            print(idx_x_samples[:20], idx_y_samples[:20])
 
         idx_x_da = xarray.DataArray(idx_x_samples, dims=['z'])
         idx_y_da = xarray.DataArray(idx_y_samples, dims=['z'])
@@ -465,8 +461,38 @@ class SeviriDataset(Dataset):
         if (y == -1).any():
             print('zeros in output', sum(y == -1))
 
-        return X, x, y
 
+        return X.to(self.dtype), x.to(self.dtype), y.to(self.dtype)
+
+class MemmapSeviriDataset(Dataset):
+    def __init__(self, batch_size=2048):
+        self.X_files = sorted(glob('/scratch/snx3000/kschuurm/irradiance_estimation/dataset/pickled/X_*.npy'))
+        self.x_files = sorted(glob('/scratch/snx3000/kschuurm/irradiance_estimation/dataset/pickled/x_*.npy'))
+        self.y_files = sorted(glob('/scratch/snx3000/kschuurm/irradiance_estimation/dataset/pickled/y_*.npy'))
+        assert len(self.X_files) == len(self.x_files) == len(self.y_files), "number of files not equal"
+
+        self.X_mmaps = [np.load(fn, mmap_mode='c') for fn in self.X_files]
+        self.x_mmaps = [np.load(fn, mmap_mode='c') for fn in self.x_files]
+        self.y_mmaps = [np.load(fn, mmap_mode='c') for fn in self.y_files]
+
+        self.lengths = [mmap.shape[0] for mmap in self.y_mmaps]
+        self.cumsum = np.cumsum(self.lengths)
+        self.batch_size = batch_size
+
+    def __len__(self):
+        return sum(self.lengths)//self.batch_size
+
+    def __getitem__(self, i):
+
+        idx_mmap = np.searchsorted(self.cumsum, i*self.batch_size, side='right')
+        idx = i*self.batch_size - self.cumsum[idx_mmap-1] if idx_mmap > 0 else i*self.batch_size
+
+
+        X = torch.from_numpy(self.X_mmaps[idx_mmap][idx:idx+self.batch_size])
+        x = torch.from_numpy(self.x_mmaps[idx_mmap][idx:idx+self.batch_size])
+        y = torch.from_numpy(self.y_mmaps[idx_mmap][idx:idx+self.batch_size])
+
+        return X, x, y
 
 class SingleImageDataset(Dataset):
     def __init__(
@@ -666,9 +692,39 @@ class SingleImageDataset(Dataset):
         return X_xr, x_xr, y_xr
 
 
+def pickle_seviri_dataset(config):
+    dataset = SeviriDataset(
+        x_vars=config.x_vars,
+        y_vars=config.y_vars,
+        x_features=config.x_features,
+        patch_size=config.patch_size,
+        transform=config.transform,
+        target_transform=config.target_transform,
+        patches_per_image=config.batch_size,
+    )
+
+    dataloader = DataLoader(dataset, batch_size=None, shuffle=True, num_workers=24)
+
+    for i in tqdm(range(0, len(dataset), 1000), desc='pickling'):
+        
+        subset = torch.utils.data.Subset(dataset, range(i, i+1000))
+        dl = DataLoader(subset, batch_size=None, shuffle=False, num_workers=24)
+        X_ls, x_ls, y_ls = [], [], []
+        for j, batch in enumerate(dl):
+            X_ls.append(batch[0])
+            x_ls.append(batch[1])
+            y_ls.append(batch[2])
+        X = torch.cat(X_ls, dim=0)
+        x = torch.cat(x_ls, dim=0)
+        y = torch.cat(y_ls, dim=0)
+        print(X.shape)
+        torch.save((X,x,y), f"/scratch/snx3000/kschuurm/irradiance_estimation/dataset/pickled/seviri_{i}.pt")
+        del X, x, y, dl, X_ls, x_ls, y_ls
+        gc.collect()
+
 
 if __name__ == "__main__":
-
+    
 
     from types import SimpleNamespace
 
@@ -696,35 +752,13 @@ if __name__ == "__main__":
         ],
         "y_vars": ["SIS"],
         "x_features": ["dayofyear", "lat", "lon", "SZA", "AZI"],
-        "transform": None,
-        "target_transform": None,
+        "transform": ZeroMinMax(),
+        "target_transform": ZeroMinMax(),
     }
     config = SimpleNamespace(**config)
 
+    pickle_seviri_dataset(config)
 
-    # timeindex = pd.DatetimeIndex(pickle_read('/scratch/snx3000/kschuurm/ZARR/timeindices.pkl'))
-    # timeindex = timeindex[(timeindex.hour >10) & (timeindex.hour <17)]
-    # traintimeindex = timeindex[(timeindex.year == 2016)]
-    # _, validtimeindex = valid_test_split(timeindex[(timeindex.year == 2017)])
+
+
     
-
-
-    dataset = SeviriDataset(
-        x_vars=config.x_vars,
-        y_vars=config.y_vars,
-        x_features=config.x_features,
-        patch_size=config.patch_size,
-        transform=config.transform,
-        target_transform=config.target_transform,
-        patches_per_image=config.batch_size,
-        validation=True,
-    )
-
-
-    dl = DataLoader(dataset, batch_size=None, shuffle=False, num_workers=0,)
-
-    for i, batch in enumerate(tqdm(dl)):
-        # print(batch)
-        if i> 100:
-            print(batch[0].shape)
-            break
