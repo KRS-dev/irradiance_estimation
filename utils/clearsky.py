@@ -74,8 +74,12 @@ class Clearsky:
         self.latitudes = latitudes
         self.longitudes = longitudes
         self.altitudes = altitudes
-        self.datetimes = datetimes
         self.solarposition = solarposition
+
+        if not isinstance(datetimes, pd.DatetimeIndex):
+            self.datetimes = pd.to_datetime(datetimes)
+        else:
+            self.datetimes = datetimes
 
     def get_clearsky(self):
 
