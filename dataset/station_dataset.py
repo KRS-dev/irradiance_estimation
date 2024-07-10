@@ -1,10 +1,12 @@
 
 import os
 import pickle
+from typing import Literal, Optional, Tuple
 import torch
 import pandas as pd
 from torch.utils.data import DataLoader, Dataset
 from dataset.normalization import ZeroMinMax, MinMax
+from utils.clearsky import Clearsky
 import xarray
 import numpy as np
 from tqdm import tqdm
@@ -18,7 +20,7 @@ class GroundstationDataset(Dataset):
     def __init__(self, zarr_store, y_vars, x_vars, x_features, 
                  patch_size=15, transform=None, target_transform=None, 
                  sarah_idx_only=False, subset_year=None, binned=False, bin_size=50, 
-                 SZA_max=85, dtype=torch.float32):
+                 SZA_max=85, filter_csi:Optional[Tuple[Literal['gt', 'st'], float]]=None, dtype=torch.float32):
         
         
 
@@ -73,7 +75,19 @@ class GroundstationDataset(Dataset):
             self.data = self.data.isel(time=np.sort(idxs))
         
         
-        
+        if filter_csi:
+
+            ghi_cls = Clearsky(self.data.time, 
+                               self.data.lat_station.item(), 
+                               self.data.lon_station.item(), 
+                               self.data.altitude_station.item()).get_clearsky()
+            self.data['SIS_CLS'] = (('time',), ghi_cls.astype(np.float32))
+            if filter_csi[0] == 'gt':
+                self.data = self.data.where(self.data.SIS > filter_csi[1] * self.data.SIS_CLS, drop=True)
+            elif filter_csi[0] == 'st':
+                self.data = self.data.where(self.data.SIS <= filter_csi[1] * self.data.SIS_CLS, drop=True)
+
+
         seviri_trans = {
             "VIS006": "channel_1",
             "VIS008": "channel_2",
@@ -163,12 +177,7 @@ class GroundstationDataset(Dataset):
         x = self.x[i]
         y = self.y[i]
 
-        # if self.transform:
-        #     X = self.transform(X.unsqueeze(0), self.x_vars).squeeze()
-        #     x = self.transform(x.unsqueeze(0), self.x_features).squeeze()
-            
-        # if self.target_transform:
-        #     y = self.target_transform(y.unsqueeze(0), self.y_vars).squeeze().view(1)
+
         return X.float(), x.float(), y.float()
     
 
