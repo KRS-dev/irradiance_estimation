@@ -2,7 +2,7 @@ from typing import Any
 from matplotlib import colors, pyplot as plt
 import matplotlib
 from models.ConvResNet_Jiang import ConvResNet_batchnormMLP
-from models.ConvResNet_short import ConvResNet_short
+from models.ConvResNet_short import ConvResNet_short, ConvResNet_short_relu
 from scipy.stats import binned_statistic_2d
 import numpy as np
 from torch.optim import Adam
@@ -27,7 +27,7 @@ class LitEstimatorPoint(L.LightningModule):
         super().__init__()
         self.lr = learning_rate
 
-        self.model = ConvResNet_short(
+        self.model = ConvResNet_short_relu(
             num_attr=len(config.x_features),
             input_channels=len(config.x_vars),
             output_channels=len(config.y_vars),
@@ -47,7 +47,7 @@ class LitEstimatorPoint(L.LightningModule):
         self.save_hyperparameters(ignore=["y","y_hat", "x_attr"])
     
     def setup(self, stage):
-        if stage == 'fit':
+        if stage == 'fit' or stage == 'validate':
             dm = self.trainer.datamodule
             self.num_dataloaders = dm.num_dataloaders
 
@@ -267,22 +267,22 @@ class LitEstimatorPoint(L.LightningModule):
             optimizer, patience=1, factor=0.1, verbose=True
         )
         
-        # return {
-        #     "optimizer": optimizer,
-        #     "lr_scheduler": {
-        #         "scheduler": reduce_lr,
-        #         "monitor": "val_loss/dataloader_idx_0",
-        #         "interval": "step",
-        #         "frequency": 0.051*2067,
-        #     },
-        # }
-        
-        
         return {
             "optimizer": optimizer,
             "lr_scheduler": {
                 "scheduler": reduce_lr,
-                "monitor": "val_loss",
-                "frequency": 1,
+                "monitor": "val_loss/dataloader_idx_0",
+                "interval": "epoch",
+                "frequency": .25,
             },
         }
+        
+        
+        # return {
+        #     "optimizer": optimizer,
+        #     "lr_scheduler": {
+        #         "scheduler": reduce_lr,
+        #         "monitor": "val_loss",
+        #         "frequency": 1,
+        #     },
+        # }
