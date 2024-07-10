@@ -6,7 +6,7 @@ import torch
 from concurrent.futures import ThreadPoolExecutor
 import pandas as pd
 from torch.utils.data import DataLoader, Dataset
-import xarray
+import xarray, zarr
 from datetime import timedelta
 import numpy as np
 import pandas as pd
@@ -693,8 +693,6 @@ class SingleImageDataset(Dataset):
 
         return X_xr, x_xr, y_xr
 
-
-
 class ForecastingDataset(Dataset):
     def __init__(
         self,
@@ -717,8 +715,10 @@ class ForecastingDataset(Dataset):
         self.chunk_time = chunk_time
         self.dtype=dtype
 
+        input_zarr = '/scratch/snx3000/kschuurm/ZARR/SEVIRI_FULLDISK_Italy_chunk.zarr'
+
         self.seviri = xarray.open_zarr(
-                "/home/kr/Documents/Solar_Power_Forecasting/05_forecast_solarsteps/ZARR/SEVIRI_FULLDISK.zarr"
+                input_zarr
             ).rename_dims({"x": "lon", "y": "lat"})\
                 .rename_vars(
                 {
@@ -727,7 +727,14 @@ class ForecastingDataset(Dataset):
                 }
             )
         
+        self.seviri_zarr = zarr.open('/scratch/snx3000/kschuurm/ZARR/SEVIRI_FULLDISK_Italy_chunk.zarr', mode='r')
+        
         if subset_time is not None:
+            self.start_idx = (self.seviri.time > np.datetime64(subset_time.start)).values.argmax()
+            self.stop_idx = (self.seviri.time > np.datetime64(subset_time.stop)).values.argmax()
+            if self.stop_idx == 0:
+                self.stop_idx = len(self.seviri.time)
+            print(self.start_idx, self.stop_idx)
             self.seviri = self.seviri.sel(time=subset_time)
 
         seviri_trans = {
@@ -748,7 +755,7 @@ class ForecastingDataset(Dataset):
         self.seviri['channel'] = nms_trans
         self.x_vars_available = [x for x in self.x_vars if x in nms_trans]
 
-        self.dem = xarray.open_zarr("/home/kr/Documents/Solar_Power_Forecasting/05_forecast_solarsteps/ZARR/DEM.zarr").fillna(0).load()
+        self.dem = xarray.open_zarr("/scratch/snx3000/kschuurm/ZARR/DEM.zarr").fillna(0).load()
 
         sizes= self.seviri.sizes
         self.H = sizes['lat']
@@ -770,24 +777,35 @@ class ForecastingDataset(Dataset):
     def __getitem__(self, index):
         
         idx_x, idx_y, idx_t = self.get_indices(index)
-        idx_x_da = xarray.DataArray([idx_x], dims=['z'])
-        idx_y_da = xarray.DataArray([idx_y], dims=['z'])
-        idx_x_patch = range(idx_x-self.pad, idx_x+self.pad+1)
-        idx_y_patch = range(idx_y-self.pad, idx_y+self.pad+1)
+        idx_x_da = xarray.DataArray([idx_x + self.pad], dims=['z'])
+        idx_y_da = xarray.DataArray([idx_y + self.pad], dims=['z'])
+        idx_x_patch = range(idx_x, idx_x+2*self.pad+1)
+        idx_y_patch = range(idx_y, idx_y+2*self.pad+1)
         idx_x_patch_da = xarray.DataArray(idx_x_patch, dims=['lon'])
         idx_y_patch_da = xarray.DataArray(idx_y_patch, dims=['lat'])
 
 
         idx_x_patch_da, idx_y_patch_da = xarray.broadcast(idx_x_patch_da, idx_y_patch_da)
 
-        X = torch.tensor(
-            self.seviri.channel_data.sel(channel=self.x_vars_available) \
-                            .isel(time=slice(idx_t*self.chunk_time, (1+idx_t)*self.chunk_time)
-                                , lat = idx_y_patch_da, lon=idx_x_patch_da).values
-                                , dtype=self.dtype 
-        ).permute(1,0,2,3) # CxBxHxW
 
-        subset_x = self.seviri.isel(time=slice(idx_t*self.chunk_time, (1+idx_t)*self.chunk_time),
+
+        
+        X = self.seviri_zarr['channel_data'][[7,8,0,1,9,10,2,3,4,5,6], 
+                                slice(self.start_idx + idx_t*self.chunk_time, 
+                                    min(self.start_idx + (1+idx_t)*self.chunk_time, self.stop_idx)), 
+                                slice(idx_y, idx_y + 2*self.pad + 1),
+                                slice(idx_x, idx_x + 2*self.pad + 1), 
+                                ]
+        X = torch.tensor(X, dtype=self.dtype).permute(1,0,2,3) # BxCxHxW
+
+        # X = torch.tensor(
+        #     self.seviri.channel_data.sel(channel=self.x_vars_available) \
+        #                     .isel(time=slice(idx_t*self.chunk_time, (1+idx_t)*self.chunk_time)
+        #                         , lat = idx_y_patch_da, lon=idx_x_patch_da).values
+        #                         , dtype=self.dtype 
+        # ).permute(1,0,2,3) # CxBxHxW
+
+        subset_x = self.seviri.isel(time=slice(idx_t*self.chunk_time, min((1+idx_t)*self.chunk_time, len(self.seviri.time))),
                                     lat = idx_y_da, lon=idx_x_da)
         N_chunk_time = len(subset_x.time)
 
@@ -808,6 +826,7 @@ class ForecastingDataset(Dataset):
 
 
         solarposition = SolarPosition(datetimes, lat, lon, altitude).get_solarposition()
+
         clearsky = Clearsky(datetimes, lat, lon, altitude, solarposition=solarposition)
         ghi_cls = torch.tensor(clearsky.get_clearsky(), dtype=self.dtype).view(-1, 1)
 
@@ -824,10 +843,7 @@ class ForecastingDataset(Dataset):
         return X, x, ghi_cls
 
 
-            
-
-
-class ForecastingDataset(Dataset):
+class ForecastingDataset2(Dataset):
     def __init__(
         self,
         y_vars,
@@ -837,7 +853,6 @@ class ForecastingDataset(Dataset):
         transform=None,
         target_transform=None,
         dtype=torch.float16,
-        chunk_time=512,
         subset_time=None
     ):
 
@@ -846,11 +861,12 @@ class ForecastingDataset(Dataset):
         self.y_vars = y_vars.copy()
         self.transform = transform
         self.target_transform = target_transform
-        self.chunk_time = chunk_time
         self.dtype=dtype
 
+        input_zarr = '/scratch/snx3000/kschuurm/ZARR/SEVIRI_FULLDISK_Italy.zarr'
+
         self.seviri = xarray.open_zarr(
-                "/home/kr/Documents/Solar_Power_Forecasting/05_forecast_solarsteps/ZARR/SEVIRI_FULLDISK.zarr"
+                input_zarr
             ).rename_dims({"x": "lon", "y": "lat"})\
                 .rename_vars(
                 {
@@ -859,8 +875,24 @@ class ForecastingDataset(Dataset):
                 }
             )
         
+        self.seviri_zarr = zarr.open(input_zarr, mode='r')
+
+        self.solarpos = xarray.open_zarr(
+                '/scratch/snx3000/kschuurm/ZARR/SOLARPOS_Italy.zarr'
+            )
+        self.solarpos_zarr = zarr.open('/scratch/snx3000/kschuurm/ZARR/SOLARPOS_Italy.zarr', mode='r')
+        
+
+
         if subset_time is not None:
+            self.subset_time = subset_time
+            self.start_idx = (self.seviri.time >= np.datetime64(subset_time.start)).values.argmax()
+            self.stop_idx = (self.seviri.time > np.datetime64(subset_time.stop)).values.argmax()
+            if self.stop_idx == 0:
+                self.stop_idx = len(self.seviri.time)
+            print(self.start_idx, self.stop_idx)
             self.seviri = self.seviri.sel(time=subset_time)
+            self.solarpos = self.solarpos.sel(time=subset_time)
 
         seviri_trans = {
             "VIS006": "channel_1",
@@ -876,75 +908,71 @@ class ForecastingDataset(Dataset):
             "IR_134": "channel_11",}
         
         nms = self.seviri.channel.values
+        print(nms)
         nms_trans = [seviri_trans[x] for x in nms]
         self.seviri['channel'] = nms_trans
+        print(self.seviri.channel.values)
         self.x_vars_available = [x for x in self.x_vars if x in nms_trans]
 
-        self.dem = xarray.open_zarr("/home/kr/Documents/Solar_Power_Forecasting/05_forecast_solarsteps/ZARR/DEM.zarr").fillna(0).load()
+        self.dem = xarray.open_zarr("/scratch/snx3000/kschuurm/ZARR/DEM.zarr").fillna(0).load()
+        self.dem = self.dem.sel(lat=self.seviri.lat, lon=self.seviri.lon)
 
         sizes= self.seviri.sizes
         self.H = sizes['lat']
         self.W = sizes['lon']
         self.pad = int(np.floor(patch_size['x']/2))
+        self.scan_H = self.H - 2*self.pad
+        self.scan_W = self.W - 2*self.pad
+
 
     def __len__(self):
-        return int((self.H- 2*self.pad)*(self.W - 2*self.pad)*
-                   (np.ceil(len(self.seviri.time)/self.chunk_time)))
+        return len(self.seviri.time)
     
-    def get_indices(self, i):
-        idx_x = int(i % (self.W - 2*self.pad))
-        idx_y = int(
-            (i // (self.W - 2*self.pad)) % (self.H - 2*self.pad)
-            )
-        idx_t = int((i // ((self.W - 2*self.pad)*(self.H - 2*self.pad))) % self.chunk_time)
-        return idx_x, idx_y, idx_t
+
     
-    def __getitem__(self, index):
+    def __getitem__(self, i):
         
-        idx_x, idx_y, idx_t = self.get_indices(index)
-        idx_x_da = xarray.DataArray([idx_x], dims=['z'])
-        idx_y_da = xarray.DataArray([idx_y], dims=['z'])
-        idx_x_patch = range(idx_x-self.pad, idx_x+self.pad+1)
-        idx_y_patch = range(idx_y-self.pad, idx_y+self.pad+1)
-        idx_x_patch_da = xarray.DataArray(idx_x_patch, dims=['lon'])
-        idx_y_patch_da = xarray.DataArray(idx_y_patch, dims=['lat'])
+        X = self.seviri_zarr['channel_data'][[7,8,0,1,9,10,2,3,4,5,6], 
+                                slice(self.start_idx + i, self.start_idx + i + 1), 
+                                :,
+                                :, 
+                                ] # CxTxHxW
+        
+        
+        X = torch.tensor(X, dtype=self.dtype).squeeze() # CxHxW
+        X = X.unfold(1, 15, 1).unfold(2, 15, 1) # CxHxWx15x15
+        X = X.permute(1,2,0,3,4).reshape(-1, 11, 15, 15) # BxCx15x15
 
 
-        idx_x_patch_da, idx_y_patch_da = xarray.broadcast(idx_x_patch_da, idx_y_patch_da)
-
-        X = torch.tensor(
-            self.seviri.channel_data.sel(channel=self.x_vars_available) \
-                            .isel(time=slice(idx_t*self.chunk_time, (1+idx_t)*self.chunk_time)
-                                , lat = idx_y_patch_da, lon=idx_x_patch_da).values
-                                , dtype=self.dtype 
-        ).permute(1,0,2,3) # CxBxHxW
-
-        subset_x = self.seviri.isel(time=slice(idx_t*self.chunk_time, (1+idx_t)*self.chunk_time),
-                                    lat = idx_y_da, lon=idx_x_da)
-        N_chunk_time = len(subset_x.time)
-
-        D = self.dem['DEM'].isel(lat = idx_y_patch_da, lon=idx_x_patch_da).values # BxHxW
-        D = torch.tensor(D, dtype=self.dtype).repeat(N_chunk_time, 1, 1)[:, None, :, :]
+        D = self.dem['DEM'].values # HxW
+        D = torch.tensor(D, dtype=self.dtype)
+        D = D.unfold(0,15,1).unfold(1,15,1) # HxWx15x15
+        D = D.reshape(-1, 1, 15,15)
+      
         X = torch.cat([X,D], dim=1) # BxCxHxW
 
-        altitude = self.dem['DEM'].isel(lat = idx_y_da, lon=idx_x_da).item()
+        subset_x = self.seviri.isel(time=i)
+
         x_dict = {}   
-        
-        datetimes = pd.to_datetime(subset_x.time.values)
-        x_dict['dayofyear'] = torch.tensor(subset_x.time.dt.dayofyear.values).view(-1,1)
+        x_dict['dayofyear'] = torch.tensor(subset_x.time.dt.dayofyear.values).view(-1,1).repeat(X.shape[0], 1)
 
-        lat = subset_x.lat.item()
-        lon = subset_x.lon.item()
-        x_dict['lat'] = torch.tensor(lat, dtype=self.dtype).repeat(N_chunk_time).view(-1,1)
-        x_dict['lon'] = torch.tensor(lon, dtype=self.dtype).repeat(N_chunk_time).view(-1,1)
+        llat, llon = xarray.broadcast(subset_x.lat, subset_x.lon)
+        llat = torch.tensor(llat.values, dtype=self.dtype)[self.pad:-self.pad, self.pad:-self.pad].reshape(-1,1)
+        llon = torch.tensor(llon.values, dtype=self.dtype)[self.pad:-self.pad, self.pad:-self.pad].reshape(-1,1)
+        x_dict['lat'] = llat
+        x_dict['lon'] = llon
 
+        x_aziclssza = self.solarpos_zarr.data[:,
+                                self.start_idx + i, 
+                                :, :,
+                                ]
+        AZI = torch.tensor(x_aziclssza[0], dtype=self.dtype)[self.pad:-self.pad, self.pad:-self.pad]
+        AZI = AZI.reshape(-1,1)
+        SZA = torch.tensor(x_aziclssza[2], dtype=self.dtype)[self.pad:-self.pad, self.pad:-self.pad].reshape(-1,1)
+        x_dict['AZI'] = AZI
+        x_dict['SZA'] = SZA
 
-        solarposition = SolarPosition(datetimes, lat, lon, altitude).get_solarposition()
-        clearsky = Clearsky(datetimes, lat, lon, altitude, solarposition=solarposition)
-        ghi_cls = torch.tensor(clearsky.get_clearsky(), dtype=self.dtype).view(-1, 1)
-
-        x_dict['AZI'] = torch.tensor(solarposition['apparent_azimuth'], dtype=self.dtype).view(-1, 1)
-        x_dict['SZA'] = torch.tensor(solarposition['apparent_zenith'], dtype=self.dtype).view(-1, 1)
+        ghi_cls = torch.tensor(x_aziclssza[1], dtype=self.dtype)[self.pad:-self.pad, self.pad:-self.pad].reshape(-1,1)
 
         x = torch.cat([x_dict[k] for k in self.x_features], dim=1)
 
