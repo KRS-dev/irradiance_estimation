@@ -48,7 +48,7 @@ class GroundstationDataset(Dataset):
             self.data = self.data.sel(time=self.data.time.dt.year == subset_year)
         
         if sarah_idx_only:
-            sarah = xarray.open_zarr('/scratch/snx3000/kschuurm/ZARR/SARAH3.zarr')
+            sarah = xarray.open_zarr('/scratch/snx3000/kschuurm/ZARR/SARAH3.zip')
             sarah_time = set(self.data.time.values).intersection(set(sarah.time.values))
             sarah_time = np.sort(np.array(list(sarah_time)))
             sarah.close()
@@ -83,9 +83,9 @@ class GroundstationDataset(Dataset):
                                self.data.altitude_station.item()).get_clearsky()
             self.data['SIS_CLS'] = (('time',), ghi_cls.astype(np.float32))
             if filter_csi[0] == 'gt':
-                self.data = self.data.where(self.data.SIS > filter_csi[1] * self.data.SIS_CLS, drop=True)
+                self.data = self.data.isel(time=(self.data.SIS > filter_csi[1] * self.data.SIS_CLS).compute())
             elif filter_csi[0] == 'st':
-                self.data = self.data.where(self.data.SIS <= filter_csi[1] * self.data.SIS_CLS, drop=True)
+                self.data = self.data.isel(time = (self.data.SIS <= filter_csi[1] * self.data.SIS_CLS).compute())
 
 
         seviri_trans = {
