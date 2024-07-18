@@ -864,6 +864,7 @@ class ForecastingDataset2(Dataset):
         self.dtype=dtype
 
         input_zarr = '/scratch/snx3000/kschuurm/ZARR/SEVIRI_FULLDISK_Italy.zarr'
+        solarpos_zarr = '/scratch/snx3000/kschuurm/ZARR/SOLARPOS_Italy.zarr'
 
         self.seviri = xarray.open_zarr(
                 input_zarr
@@ -877,11 +878,10 @@ class ForecastingDataset2(Dataset):
         
         self.seviri_zarr = zarr.open(input_zarr, mode='r')
 
-        self.solarpos = xarray.open_zarr(
-                '/scratch/snx3000/kschuurm/ZARR/SOLARPOS_Italy.zarr'
-            )
-        self.solarpos_zarr = zarr.open('/scratch/snx3000/kschuurm/ZARR/SOLARPOS_Italy.zarr', mode='r')
+        self.solarpos = xarray.open_zarr(solarpos_zarr)
+        self.solarpos_zarr = zarr.open(solarpos_zarr, mode='r')
         
+        assert (self.seviri.time.values == self.solarpos.time.values).all(), "time mismatch"
 
 
         if subset_time is not None:
