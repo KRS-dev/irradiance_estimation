@@ -267,7 +267,7 @@ class SeviriDataset(Dataset):
                     "y": "lat",
                 }
             )
-        )
+        ).drop_duplicates('time')
         seviri_trans = {
             "VIS006": "channel_1",
             "VIS008": "channel_2",
@@ -296,7 +296,7 @@ class SeviriDataset(Dataset):
             with open('/scratch/snx3000/kschuurm/ZARR/DEM.pkl', 'rb') as pickle_file:
                 self.dem = pickle.load(pickle_file) 
 
-        self.sarah = xarray.open_zarr("/scratch/snx3000/kschuurm/ZARR/SARAH3.zarr")
+        self.sarah = xarray.open_zarr("/scratch/snx3000/kschuurm/ZARR/SARAH3_2023.zarr")
 
         sizes= self.seviri.sizes
         self.H = sizes['lat']
@@ -309,16 +309,25 @@ class SeviriDataset(Dataset):
 
         if validation is True:
             self.timeindices  = self.sarah_nulls.time[self.sarah_nulls.time.dt.year == 2022].values
+        elif validation == 'test':
+            self.timeindices  = self.sarah_nulls.time[self.sarah_nulls.time.dt.year == 2023].values
         else:
             self.timeindices  = self.sarah_nulls.time[self.sarah_nulls.time.dt.year < 2022].values
 
         self.timeindices = np.sort(np.array(list(set(self.timeindices).intersection(set(self.seviri.time.values)))))
         
 
-        if validation is True:
-            if os.path.exists('/scratch/snx3000/kschuurm/ZARR/idx_x_sampler.pkl') and os.path.exists('/scratch/snx3000/kschuurm/ZARR/idx_y_sampler.pkl'):
-                self.idx_x_sampler = pickle_read('/scratch/snx3000/kschuurm/ZARR/idx_x_sampler.pkl')
-                self.idx_y_sampler = pickle_read('/scratch/snx3000/kschuurm/ZARR/idx_y_sampler.pkl')
+        if validation is True or validation == 'test':
+            if validation == 'test':
+                nm_add = '_test'
+            else:
+                nm_add = ''
+            fn1 = f'/scratch/snx3000/kschuurm/ZARR/idx_x_sampler{nm_add}.pkl'
+            fn2 = f'/scratch/snx3000/kschuurm/ZARR/idx_y_sampler{nm_add}.pkl'
+
+            if os.path.exists(fn1) and os.path.exists(fn2):
+                self.idx_x_sampler = pickle_read(fn1)
+                self.idx_y_sampler = pickle_read(fn2)
             else:
                 self.idx_x_sampler = {}
                 self.idx_y_sampler = {}
@@ -350,8 +359,8 @@ class SeviriDataset(Dataset):
                     self.idx_x_sampler[timeidx] = idx_x_samples
                     self.idx_y_sampler[timeidx] = idx_y_samples
                 
-                pickle_write(self.idx_x_sampler, '/scratch/snx3000/kschuurm/ZARR/idx_x_sampler.pkl')
-                pickle_write(self.idx_y_sampler, '/scratch/snx3000/kschuurm/ZARR/idx_y_sampler.pkl')
+                pickle_write(self.idx_x_sampler, fn1)
+                pickle_write(self.idx_y_sampler, fn2)
 
     def __len__(self):
         return len(self.timeindices)
@@ -361,7 +370,7 @@ class SeviriDataset(Dataset):
         subset_seviri = self.seviri.sel(time = timeidx).load()
         subset_sarah = self.sarah.sel(time = timeidx).load()
 
-        if self.validation is True:
+        if self.validation is True or self.validation == 'test':
             idx_x_samples = self.idx_x_sampler[timeidx]
             idx_y_samples = self.idx_y_sampler[timeidx]
         else:
