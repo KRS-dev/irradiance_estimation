@@ -395,14 +395,24 @@ class SeviriDataset(Dataset):
             x = torch.cat([x_dayofyear, x_lat, x_lon], dim=1)
         
         y = torch.tensor(y.channel_data.values, dtype=self.dtype).permute(1,0)
+        if 'DEM' in self.x_features:
+            x_DEM = self.dem.DEM.isel(lon=idx_x_da, lat=idx_y_da) \
+                            .values
+            x_DEM = torch.tensor(x_DEM, dtype=self.dtype).view(-1,1)
+            x = torch.cat([x, x_DEM], dim=1)
 
+        if 'DEM' in self.x_vars:
+            D = self.dem['DEM'].isel(lat = idx_y_patch_da, lon=idx_x_patch_da).values # BxHxW
+            D = torch.tensor(D, dtype=self.dtype)[:, None, :, :]
+            X = torch.cat([X,D], dim=1) # BxCxHxW
+        
         if 'SZA' in self.x_features:
             sun = ephem.Sun()
             szas, azis, = [], []
             for lat, lon in zip(x_lat, x_lon):
                 latitude = lat.item()
                 longitude = lon.item()
-                altitude = 0
+                altitude = self.dem['DEM'].sel(lat=lat, lon=lon, method='nearest').item()
                 thetime = pd.to_datetime(timeidx)
                 obs = ephem.Observer()
                 obs.date = ephem.Date(thetime)
@@ -422,11 +432,7 @@ class SeviriDataset(Dataset):
 
             x = torch.cat([x, szas, azis], dim=1)
 
-        if 'DEM' in self.x_features:
-            x_DEM = self.dem.DEM.isel(lon=idx_x_da, lat=idx_y_da) \
-                            .values
-            x_DEM = torch.tensor(x_DEM, dtype=self.dtype).view(-1,1)
-            x = torch.cat([x, x_DEM], dim=1)
+        
 
         X = subset_seviri.channel_data.sel(channel=self.x_vars_available) \
                             .isel(lat = idx_y_patch_da, lon=idx_x_patch_da) \
