@@ -39,7 +39,7 @@ class SolarPosition:
             self.obs.date = ephem.Date(self.datetime)
             self.obs.lat = str(self.lat)
             self.obs.lon = str(self.lon)
-            self.obs.elevation = self.altitude if not np.isnan(self.altitude) else 0
+            self.obs.elevation = self.altitude if not np.isnan(float(self.altitude)) else 0
 
             self.sun.compute(self.obs)
             azis = self.sun.az
@@ -73,7 +73,7 @@ class Clearsky:
     def __init__(self, datetimes, latitudes, longitudes, altitudes, solarposition=None):
         self.latitudes = latitudes
         self.longitudes = longitudes
-        self.altitudes = altitudes
+        self.altitudes = float(altitudes)
         self.solarposition = solarposition
 
         if not isinstance(datetimes, pd.DatetimeIndex):
