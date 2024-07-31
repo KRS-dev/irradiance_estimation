@@ -23,21 +23,21 @@ import cartopy.feature as cfeature
 
 class LitEstimatorPoint(L.LightningModule):
     def __init__(self, learning_rate, config, metric = MeanSquaredError(), 
-                 parameter_loss=False, alpha=0.1, zero_loss = None):
+                 parameter_loss=False, alpha=0.1, zero_loss = None,
+                 monitor_loss = 'val_loss'):
         super().__init__()
         self.lr = learning_rate
 
-        self.model = ConvResNet_short_relu(
+        self.model = ConvResNet_short(
             num_attr=len(config.x_features),
             input_channels=len(config.x_vars),
             output_channels=len(config.y_vars),
         )
 
-        
-
         self.transform = config.transform
         self.y_vars = config.y_vars
         self.x_features = config.x_features
+        self.monitor_loss = monitor_loss
 
         self.parameter_loss = parameter_loss
         self.parameter_metric = MeanSquaredError().to(self.device)
@@ -48,8 +48,11 @@ class LitEstimatorPoint(L.LightningModule):
     
     def setup(self, stage):
         if stage == 'fit' or stage == 'validate':
-            dm = self.trainer.datamodule
-            self.num_dataloaders = dm.num_dataloaders
+            if self.trainer.datamodule is not None:
+                dm = self.trainer.datamodule
+                self.num_dataloaders = dm.num_dataloaders
+            else:
+                self.num_dataloaders = 1
 
         self.train_metric = MeanSquaredError().to(self.device)
         self.valid_metric = MeanSquaredError().to(self.device) 
@@ -247,7 +250,6 @@ class LitEstimatorPoint(L.LightningModule):
                     self.logger.log_image(key="Prediction error SARAH3", images=figs)
             
                 plt.close()
-        
     
     def on_validation_epoch_start(self):
         self.y = [[] for _ in range(self.num_dataloaders)]
@@ -256,7 +258,6 @@ class LitEstimatorPoint(L.LightningModule):
 
     def forward(self, X, x_attrs):
         return self.model(X.float().squeeze(),x_attrs.float())
-  
 
     def configure_optimizers(self):
         optimizer = torch.optim.AdamW(self.parameters(), 
@@ -271,7 +272,7 @@ class LitEstimatorPoint(L.LightningModule):
             "optimizer": optimizer,
             "lr_scheduler": {
                 "scheduler": reduce_lr,
-                "monitor": "val_loss/dataloader_idx_0",
+                "monitor": self.monitor_loss,
                 "interval": "epoch",
                 "frequency": .25,
             },
