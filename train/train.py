@@ -69,7 +69,7 @@ def get_testdataloader(config):
 def main():
 
     config = {
-        "batch_size": 512,
+        "batch_size": 2048,
         "patch_size": {
             "x": 15,
             "y": 15,
@@ -94,7 +94,7 @@ def main():
         "x_features": ["dayofyear", "lat", "lon", 'SZA', "AZI",],
         "transform": ZeroMinMax(),
         "target_transform": ZeroMinMax(),
-        'max_epochs': 5,
+        'max_epochs': 2,
         # Compute related
         'num_workers': 24,
         'ACCELERATOR': "gpu",   
@@ -105,25 +105,26 @@ def main():
         'EarlyStopping': {'patience':3},
         'ModelCheckpoint':{'every_n_epochs':1, 'save_top_k':3},
         'val_check_interval': 0.1,
-        'ckpt_fn': '/scratch/snx3000/kschuurm/irradiance_estimation/train/SIS_point_estimation/jup3gn3n/checkpoints/last.ckpt',
+        'ckpt_fn': '/scratch/snx3000/kschuurm/irradiance_estimation/train/SIS_point_estimation/gsue32kb/checkpoints/last.ckpt',
     }
     config = SimpleNamespace(**config)
 
 
     estimator = LitEstimatorPoint(
-        learning_rate=0.001,
+        learning_rate=0.0001,
         config=config,
         metric=MeanSquaredError(),
+        monitor_loss='val_loss',
     )
 
     config.model = type(estimator.model).__name__
 
-    # wandb_logger = WandbLogger(name='Emulator 4', project="SIS_point_estimation", log_model=True)
-    wandb_logger = WandbLogger(name='Emulator 4', project="SIS_point_estimation", id='jup3gn3n', resume='must')
+    # wandb_logger = WandbLogger(name='Emulator 5, altitude..', project="SIS_point_estimation", log_model=True)
+    wandb_logger = WandbLogger(name='Emulator 5, altitude..', project="SIS_point_estimation", id='gsue32kb', resume='must')
 
 
     if rank_zero_only.rank == 0:  # only update the wandb.config on the rank 0 process
-        wandb_logger.experiment.config.update(vars(config))
+        wandb_logger.experiment.config.update(vars(config), allow_val_change=True)
 
     mc_sarah = ModelCheckpoint(
         monitor='val_loss', 
