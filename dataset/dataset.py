@@ -296,7 +296,7 @@ class SeviriDataset(Dataset):
             with open('/scratch/snx3000/kschuurm/ZARR/DEM.pkl', 'rb') as pickle_file:
                 self.dem = pickle.load(pickle_file) 
 
-        self.sarah = xarray.open_zarr("/scratch/snx3000/kschuurm/ZARR/SARAH3_2023.zarr")
+        self.sarah = xarray.open_zarr("/scratch/snx3000/kschuurm/ZARR/SARAH3.zarr")
 
         sizes= self.seviri.sizes
         self.H = sizes['lat']
@@ -340,21 +340,6 @@ class SeviriDataset(Dataset):
                     samples = coords_notnull[torch.randint(0, len(coords_notnull), (self.patches_per_image,), dtype=torch.int32, generator=self.rng)]
                     idx_x_samples = self.pad + samples[:,1]
                     idx_y_samples = self.pad + samples[:,0]
-
-                    # min_x = int(self.min_x.sel(time=timeidx).values)
-                    # min_y = int(self.min_y.sel(time=timeidx).values)
-                    # max_x = int(self.max_x.sel(time=timeidx).values)
-                    # max_y = int(self.max_y.sel(time=timeidx).values)
-                    # idx_x_samples = torch.randint(min_x + self.pad, 
-                    #                             max_x-self.pad, 
-                    #                             (self.patches_per_image,), 
-                    #                             dtype=torch.int32, 
-                    #                             generator=self.rng)
-                    # idx_y_samples = torch.randint(min_y + self.pad, 
-                    #                             max_y-self.pad, 
-                    #                             (self.patches_per_image,), 
-                    #                             dtype=torch.int32, 
-                    #                             generator=self.rng)
 
                     self.idx_x_sampler[timeidx] = idx_x_samples
                     self.idx_y_sampler[timeidx] = idx_y_samples
@@ -404,6 +389,13 @@ class SeviriDataset(Dataset):
             x = torch.cat([x_dayofyear, x_lat, x_lon], dim=1)
         
         y = torch.tensor(y.channel_data.values, dtype=self.dtype).permute(1,0)
+
+        X = subset_seviri.channel_data.sel(channel=self.x_vars_available) \
+                            .isel(lat = idx_y_patch_da, lon=idx_x_patch_da) \
+                            .values # CxBxHxW
+        
+        X = torch.tensor(X, dtype=self.dtype).permute(1,0,2,3) # BxCxHxW
+
         if 'DEM' in self.x_features:
             x_DEM = self.dem.DEM.isel(lon=idx_x_da, lat=idx_y_da) \
                             .values
@@ -442,19 +434,6 @@ class SeviriDataset(Dataset):
             x = torch.cat([x, szas, azis], dim=1)
 
         
-
-        X = subset_seviri.channel_data.sel(channel=self.x_vars_available) \
-                            .isel(lat = idx_y_patch_da, lon=idx_x_patch_da) \
-                            .values # CxBxHxW
-        
-        X = torch.tensor(X, dtype=self.dtype).permute(1,0,2,3) # BxCxHxW
-
-
-        if 'DEM' in self.x_vars:
-            D = self.dem['DEM'].isel(lat = idx_y_patch_da, lon=idx_x_patch_da).values # BxHxW
-            D = torch.tensor(D, dtype=self.dtype)[:, None, :, :]
-            X = torch.cat([X,D], dim=1) # BxCxHxW
-        
         if self.transform:
             X = self.transform(X, self.x_vars)
             x = self.transform(x, self.x_features)
@@ -481,33 +460,33 @@ class SeviriDataset(Dataset):
 
         return X.to(self.dtype), x.to(self.dtype), y.to(self.dtype)
 
-class MemmapSeviriDataset(Dataset):
-    def __init__(self, batch_size=2048):
-        self.X_files = sorted(glob('/scratch/snx3000/kschuurm/irradiance_estimation/dataset/pickled/X_*.npy'))
-        self.x_files = sorted(glob('/scratch/snx3000/kschuurm/irradiance_estimation/dataset/pickled/x_*.npy'))
-        self.y_files = sorted(glob('/scratch/snx3000/kschuurm/irradiance_estimation/dataset/pickled/y_*.npy'))
-        assert len(self.X_files) == len(self.x_files) == len(self.y_files), "number of files not equal"
+class PklSeviriDataset(Dataset):
+    def __init__(self, fn_format, batch_size=2048):
 
-        self.X_mmaps = [np.load(fn, mmap_mode='c') for fn in self.X_files]
-        self.x_mmaps = [np.load(fn, mmap_mode='c') for fn in self.x_files]
-        self.y_mmaps = [np.load(fn, mmap_mode='c') for fn in self.y_files]
+        def sortfunc(x):
+            return int(x.split('_')[-1].split('.pkl')[0])
+        self.files = glob(fn_format)
+        self.files.sort(key=sortfunc)
 
-        self.lengths = [mmap.shape[0] for mmap in self.y_mmaps]
-        self.cumsum = np.cumsum(self.lengths)
+        self.cumsum = [int(x.split('_')[-1].split('.pkl')[0]) for x in self.files]
         self.batch_size = batch_size
 
     def __len__(self):
-        return sum(self.lengths)//self.batch_size
+        return self.cumsum[-1]
 
     def __getitem__(self, i):
 
-        idx_mmap = np.searchsorted(self.cumsum, i*self.batch_size, side='right')
-        idx = i*self.batch_size - self.cumsum[idx_mmap-1] if idx_mmap > 0 else i*self.batch_size
 
 
-        X = torch.from_numpy(self.X_mmaps[idx_mmap][idx:idx+self.batch_size])
-        x = torch.from_numpy(self.x_mmaps[idx_mmap][idx:idx+self.batch_size])
-        y = torch.from_numpy(self.y_mmaps[idx_mmap][idx:idx+self.batch_size])
+        idx_mmap = np.searchsorted(self.cumsum, i, side='left')
+        
+        X,x,y = pickle_read(self.files[idx_mmap])
+        idx = i - self.cumsum[idx_mmap]
+
+        sl = slice(idx*self.batch_size, (idx+1)*self.batch_size)
+        X = X[sl]
+        x = x[sl]
+        y = y[sl]
 
         return X, x, y
 
@@ -1001,7 +980,7 @@ class ForecastingDataset2(Dataset):
 
             
 
-def pickle_seviri_dataset(config):
+def pickle_seviri_dataset(config, validation=False):
     dataset = SeviriDataset(
         x_vars=config.x_vars,
         y_vars=config.y_vars,
@@ -1010,25 +989,14 @@ def pickle_seviri_dataset(config):
         transform=config.transform,
         target_transform=config.target_transform,
         patches_per_image=config.batch_size,
+        validation=validation,
     )
 
-    dataloader = DataLoader(dataset, batch_size=None, shuffle=True, num_workers=24)
+    dl = DataLoader(dataset, batch_size=None, shuffle=False, num_workers=24)
+    for i, (X,x,y) in enumerate(tqdm(dl)):
 
-    for i in tqdm(range(0, len(dataset), 1000), desc='pickling'):
-        
-        subset = torch.utils.data.Subset(dataset, range(i, i+1000))
-        dl = DataLoader(subset, batch_size=None, shuffle=False, num_workers=24)
-        X_ls, x_ls, y_ls = [], [], []
-        for j, batch in enumerate(dl):
-            X_ls.append(batch[0])
-            x_ls.append(batch[1])
-            y_ls.append(batch[2])
-        X = torch.cat(X_ls, dim=0)
-        x = torch.cat(x_ls, dim=0)
-        y = torch.cat(y_ls, dim=0)
-        print(X.shape)
-        torch.save((X,x,y), f"/scratch/snx3000/kschuurm/irradiance_estimation/dataset/pickled/seviri_{i}.pt")
-        del X, x, y, dl, X_ls, x_ls, y_ls
+        pickle_write((X,x,y), f"/scratch/snx3000/kschuurm/irradiance_estimation/dataset/pickled/seviri_val_{i}.pkl")
+        del X, x, y
         gc.collect()
 
 
