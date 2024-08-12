@@ -9,7 +9,7 @@ from torch.utils.data import DataLoader, Dataset
 from torchmetrics import MeanAbsoluteError, MeanSquaredError
 import wandb
 import xarray
-from dataset.dataset import ImageDataset, SeviriDataset, valid_test_split, pickle_read
+from dataset.dataset import ImageDataset, SamplesDataset, valid_test_split, pickle_read
 from dataset.normalization import ZeroMinMax
 from lightning.pytorch import Trainer
 from lightning.pytorch.loggers import WandbLogger
@@ -25,7 +25,7 @@ os.environ["WANDB__SERVICE_WAIT"] = "30"
 def get_dataloaders(config):
     
 
-    train_dataset = SeviriDataset(
+    train_dataset = SamplesDataset(
         x_vars=config.x_vars,
         y_vars=config.y_vars,
         x_features=config.x_features,
@@ -34,7 +34,7 @@ def get_dataloaders(config):
         target_transform=config.target_transform,
         patches_per_image=config.batch_size,
     )
-    valid_dataset = SeviriDataset(
+    valid_dataset = SamplesDataset(
         x_vars=config.x_vars,
         y_vars=config.y_vars,
         x_features=config.x_features,

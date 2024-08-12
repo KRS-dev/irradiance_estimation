@@ -4,9 +4,6 @@ import pandas as pd
 import torch
 
 
-
-
-
 def get_satellite_look_angles(phi, theta, degree=False, dtype=torch.float32) -> torch.Tensor: # lat, lon
     """Calculate the azimuth and solar zenith angles of the SEVIR satellite from a given point on the Earth
     Uses spherical geometry to approximate the angles.

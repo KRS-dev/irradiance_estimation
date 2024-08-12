@@ -129,35 +129,3 @@ def solarzenithangle_latlon(da_temp):
     return ds
 
 
-if __name__ == '__main__':
-    zarr_store = '/scratch/snx3000/kschuurm/DATA/train.zarr'
-
-    hres = xarray.open_zarr(zarr_store)
-
-    lat = hres.lat 
-    lon = hres.lon
-
-    # lat_sza = np.linspace(np.floor(lat.min()), np.ceil(lat.max()), 1)
-    # lon_sza = np.linspace(np.floor(lon.min()), np.ceil(lon.max()), 1)
-
-    # times = hres.time.values
-
-    # datetimes = pd.to_datetime(hres.time)
-
-    # array = xarray.apply_ufunc(
-    #     solarzenithangle,
-    #     datetimes,
-    #     hres.lat,
-    #     hres.lon,
-    #     hres.SRTM,
-    #     input_core_dims=[['time'], [], [], []],
-    #     output_core_dims=[['time', 'solar_position']],
-    #     vectorize=True,
-    #     dask="parallelized",
-    #     dask_gufunc_kwargs={'output_sizes': {'time':len(hres.time), 'solar_position':1}},
-    #     output_dtypes=[np.float32],
-    #     )
-
-    # ds_sun = solarzenithangle_latlon(hres.SIS)
-
-

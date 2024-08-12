@@ -1,19 +1,15 @@
 
-import os
-import pickle
 from typing import Literal, Optional, Tuple
 import torch
-import pandas as pd
 from torch.utils.data import DataLoader, Dataset
-from dataset.normalization import ZeroMinMax, MinMax
+from dataset.normalization import ZeroMinMax
 from utils.clearsky import Clearsky
 import xarray
 import numpy as np
-from tqdm import tqdm
-from utils.etc import benchmark
+import dask
+
 from utils.satellite_position import get_satellite_look_angles, coscattering_angle
 
-import dask
 dask.config.set(scheduler='synchronous')
 
 class GroundstationDataset(Dataset):
@@ -21,7 +17,10 @@ class GroundstationDataset(Dataset):
                  patch_size=15, transform=None, target_transform=None, 
                  sarah_idx_only=False, subset_year=None, binned=False, bin_size=50, 
                  SZA_max=85, filter_csi:Optional[Tuple[Literal['gt', 'st'], float]]=None, dtype=torch.float32):
-        
+        """
+        Dataset wrapper for collocated groundstations measurements and satellite data.
+        To improve performance, the dataset is loaded in memory and the data is transformed to torch tensors.
+        """
         
 
         self.x_vars = x_vars
@@ -54,12 +53,8 @@ class GroundstationDataset(Dataset):
             sarah.close()
             self.data = self.data.sel(time=sarah_time)
         
-        
-
         if SZA_max:
             self.data = self.data.isel(time=(self.data.SZA < SZA_max*np.pi/180).compute())
-        
-        
         
         if binned:
             SIS_max = self.data.SIS.max().values
@@ -74,9 +69,7 @@ class GroundstationDataset(Dataset):
             idxs = np.concatenate(idxs)
             self.data = self.data.isel(time=np.sort(idxs))
         
-        
         if filter_csi:
-
             ghi_cls = Clearsky(self.data.time, 
                                self.data.lat_station.item(), 
                                self.data.lon_station.item(), 
@@ -180,32 +173,3 @@ class GroundstationDataset(Dataset):
 
         return X.float(), x.float(), y.float()
     
-
-
-
-
-
-if __name__ == '__main__':
-    
-    station_name = 'CAB'
-    y_vars = ["SIS", "DNI", "SID"]
-    x_vars = [
-        "channel_1",
-        "channel_2",
-        "channel_3",
-        "channel_4",
-        "channel_5",
-        "channel_6",
-        "channel_7",
-        "channel_8",
-        "channel_9",
-        "channel_10",
-        "channel_11",
-    ]
-    x_features = ["dayofyear", "lat", "lon", "SZA", "AZI"]
-    patch_size = 15
-    time_window = 12 # minutes
-    transform = ZeroMinMax()
-    target_transform = ZeroMinMax()
-
-

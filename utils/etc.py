@@ -30,3 +30,13 @@ def valid_date(s):
     except ValueError:
         msg = "not a valid date: {0!r}".format(s)
         raise argparse.ArgumentTypeError(msg)
+
+def pickle_write(obj, fn):
+    with open(fn, 'wb') as pickle_file:
+        pickle.dump(obj, pickle_file)
+    return obj
+
+def pickle_read(fn):
+    with open(fn, 'rb') as pickle_file:
+        obj = pickle.load(pickle_file)
+    return obj

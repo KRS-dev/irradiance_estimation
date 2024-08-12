@@ -15,7 +15,7 @@ from torchmetrics import MeanAbsoluteError, MeanSquaredError
 from utils.etc import benchmark
 import wandb
 import xarray
-from dataset.dataset import ImageDataset, SeviriDataset, valid_test_split, pickle_read
+from dataset.dataset import ImageDataset, SamplesDataset, valid_test_split, pickle_read
 from dataset.normalization import MinMax, ZeroMinMax
 from train import get_dataloaders
 from lightning.pytorch import Trainer
