@@ -1,29 +1,21 @@
-from glob import glob
 import itertools
-from multiprocessing import Pool
-import os
-import traceback
-from dataset.station_dataset import GroundstationDataset, GroundstationDataset2
+from dataset.station_dataset import GroundstationDataset
 from lightning import LightningDataModule
-import matplotlib.pyplot as plt
-from models.FCN import residual_FCN
-import numpy as np
-import pandas as pd
 import torch
 from torch.utils.data import DataLoader, Dataset, ConcatDataset
 from torchmetrics import MeanAbsoluteError, MeanSquaredError
 from utils.etc import benchmark
 import wandb
-import xarray
-from dataset.dataset import ImageDataset, SamplesDataset, valid_test_split, pickle_read
-from dataset.normalization import MinMax, ZeroMinMax
+from dataset.dataset import ImageDataset, SamplesDataset,
+from utils.etc pickle_read
+from dataset.normalization import  ZeroMinMax
 from train import get_dataloaders
 from lightning.pytorch import Trainer
 from lightning.pytorch.loggers import WandbLogger
 from lightning.pytorch.utilities import rank_zero_only
 from lightning.pytorch.callbacks import EarlyStopping, ModelCheckpoint
-from models.ConvResNet_Jiang import ConvResNet, ConvResNet_batchnormMLP, ConvResNet_dropout, ConvResNet_inputCdropout, ConvResNet_BNdropout
-from models.LightningModule import LitEstimator, LitEstimatorPoint
+from models.ConvResNet import ConvResNet
+from models.lightningwrapper import  LitEstimatorPoint
 from tqdm import tqdm
 
 # from pytorch_lightning.pytorch.callbacks import DeviceStatsMonitor

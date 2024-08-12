@@ -17,7 +17,7 @@ from lightning.pytorch.loggers import WandbLogger
 from lightning.pytorch.utilities import rank_zero_only
 from lightning.pytorch.callbacks import EarlyStopping, ModelCheckpoint
 from models.ConvResNet_Jiang import ConvResNet, ConvResNet_batchnormMLP, ConvResNet_dropout, ConvResNet_inputCdropout, ConvResNet_BNdropout
-from models.LightningModule import LitEstimator, LitEstimatorPoint
+from models.lightningwrapper import LitEstimator, LitEstimatorPoint
 from tqdm import tqdm
 
 # from pytorch_lightning.pytorch.callbacks import DeviceStatsMonitor

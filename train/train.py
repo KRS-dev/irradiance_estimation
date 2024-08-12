@@ -15,7 +15,7 @@ from lightning.pytorch import Trainer
 from lightning.pytorch.loggers import WandbLogger
 from lightning.pytorch.utilities import rank_zero_only
 from lightning.pytorch.callbacks import EarlyStopping, ModelCheckpoint
-from models.LightningModule import LitEstimatorPoint
+from models.lightningwrapper import LitEstimatorPoint
 from tqdm import tqdm
 
 from types import SimpleNamespace
