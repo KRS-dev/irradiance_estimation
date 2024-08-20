@@ -1,7 +1,5 @@
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
-from torch.nn.parameter import Parameter
 from models.resblock import ResBlock
 
 class ConvResNet(nn.Module):

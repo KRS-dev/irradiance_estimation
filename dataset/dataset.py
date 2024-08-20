@@ -16,7 +16,7 @@ from dataset.normalization import ZeroMinMax
 from utils.clearsky import Clearsky, SolarPosition
 from utils.etc import pickle_read, pickle_write
 
-
+# Essential config when working in jupyter notebooks with these datasets. Otherwise the dask scheduler will not work properly.
 dask.config.set(scheduler='synchronous')
 
 
@@ -449,24 +449,6 @@ if __name__ == "__main__":
     }
     config = SimpleNamespace(**config)
 
-
-    # timeindex = pd.DatetimeIndex(pickle_read('/scratch/snx3000/kschuurm/ZARR/timeindices.pkl'))
-    # timeindex = timeindex[(timeindex.hour >10) & (timeindex.hour <17)]
-    # traintimeindex = timeindex[(timeindex.year == 2016)]
-    # _, validtimeindex = valid_test_split(timeindex[(timeindex.year == 2017)])
-    
-
-
-    # dataset = SeviriDataset(
-    #     x_vars=config.x_vars,
-    #     y_vars=config.y_vars,
-    #     x_features=config.x_features,
-    #     patch_size=config.patch_size,
-    #     transform=config.transform,
-    #     target_transform=config.target_transform,
-    #     patches_per_image=config.batch_size,
-    #     validation=True,
-    # )
 
     dataset= ImageDataset(
         y_vars=config.y_vars,

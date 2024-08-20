@@ -19,14 +19,9 @@ class ResBlock(nn.Module):
             nn.ReLU(),
         )
 
-        # self.conv3 = nn.Sequential(
-        #     nn.Conv2d(hidden_channels, out_channels, kernel_size, padding="same"),
-        #     nn.BatchNorm2d(out_channels),
-        #     nn.ReLU(),
-        # )
+
 
     def forward(self, x):
         x1 = self.conv1(x)
-        x = self.conv2(x1) + x1
-        # x = self.conv3(x) + x1  # residual connection
+        x = self.conv2(x1) + x1 # residual connection
         return x

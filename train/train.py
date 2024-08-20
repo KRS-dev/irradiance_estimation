@@ -1,22 +1,13 @@
 import os
-import traceback
 from dataset.station_dataset import GroundstationDataset
-import matplotlib.pyplot as plt
-import numpy as np
-import pandas as pd
-import torch
-from torch.utils.data import DataLoader, Dataset
-from torchmetrics import MeanAbsoluteError, MeanSquaredError
-import wandb
-import xarray
-from dataset.dataset import ImageDataset, SamplesDataset, valid_test_split, pickle_read
+from torch.utils.data import DataLoader
+from dataset.dataset import  SamplesDataset
 from dataset.normalization import ZeroMinMax
 from lightning.pytorch import Trainer
 from lightning.pytorch.loggers import WandbLogger
 from lightning.pytorch.utilities import rank_zero_only
-from lightning.pytorch.callbacks import EarlyStopping, ModelCheckpoint
-from models.lightningwrapper import LitEstimatorPoint
-from tqdm import tqdm
+from lightning.pytorch.callbacks import ModelCheckpoint
+from models.lightningmodules import LitConvResNet
 
 from types import SimpleNamespace
 
@@ -105,26 +96,23 @@ def main():
         'EarlyStopping': {'patience':3},
         'ModelCheckpoint':{'every_n_epochs':1, 'save_top_k':3},
         'val_check_interval': 0.1,
-        'ckpt_fn': '/scratch/snx3000/kschuurm/irradiance_estimation/train/SIS_point_estimation/gsue32kb/checkpoints/last.ckpt',
     }
     config = SimpleNamespace(**config)
 
 
-    estimator = LitEstimatorPoint(
-        learning_rate=0.0001,
+    estimator = LitConvResNet(
+        learning_rate=10e-5,
         config=config,
-        metric=MeanSquaredError(),
         monitor_loss='val_loss',
     )
 
     config.model = type(estimator.model).__name__
 
-    # wandb_logger = WandbLogger(name='Emulator 5, altitude..', project="SIS_point_estimation", log_model=True)
-    wandb_logger = WandbLogger(name='Emulator 5, altitude..', project="SIS_point_estimation", id='gsue32kb', resume='must')
+    wandb_logger = WandbLogger(name='Emulator', project="SIS_point_estimation")
 
 
     if rank_zero_only.rank == 0:  # only update the wandb.config on the rank 0 process
-        wandb_logger.experiment.config.update(vars(config), allow_val_change=True)
+        wandb_logger.experiment.config.update(vars(config))
 
     mc_sarah = ModelCheckpoint(
         monitor='val_loss', 
@@ -134,13 +122,6 @@ def main():
         save_last=True,
         save_on_train_epoch_end=False,
     ) 
-    early_stopping = EarlyStopping(monitor='val_loss', 
-                                   patience=config.EarlyStopping['patience'],
-                                   verbose=True,
-                                   min_delta=0.01,
-                                   log_rank_zero_only=True,
-                                   check_finite=True,
-                                   )
 
     trainer =  Trainer(
         # fast_dev_run=True,

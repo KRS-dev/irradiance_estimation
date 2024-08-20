@@ -1,11 +1,7 @@
-from typing import Any
-from matplotlib import colors, pyplot as plt
+from matplotlib import pyplot as plt
 from models.model import ConvResNet
-import numpy as np
 from torchmetrics import MeanSquaredError, R2Score, MeanAbsoluteError, MetricCollection, MeanMetric
 from torchmetrics.aggregation import MeanMetric
-import torch.nn as nn
-import torch.nn.functional as F
 import lightning.pytorch as L
 from lightning.pytorch.loggers import WandbLogger
 import torch
